@@ -74,7 +74,7 @@ def get_synonyms(preferred_curies: List[str]) -> Dict[str, Any]:
     Raises:
         APIException: If the API request fails
     """
-    url = "https://name-resolution-sri-dev.apps.renci.org/synonyms"
+    url = "https://name-resolution-sri.renci.org/synonyms"
     
     payload = {
         "preferred_curies": preferred_curies
@@ -124,7 +124,7 @@ def lookup_names(query: str,
     Raises:
         APIException: If the API request fails
     """
-    url = "https://name-resolution-sri-dev.apps.renci.org/lookup"
+    url = "https://name-resolution-sri.renci.org/lookup"
     
     params = {
         "string": query,
@@ -247,24 +247,19 @@ def bulk_lookup_names(strings: List[str],
     Raises:
         APIException: If the API request fails
     """
-    url = "https://name-resolution-sri-dev.apps.renci.org/bulk-lookup"
+    url = "https://name-resolution-sri.renci.org/bulk-lookup"
     
     payload = {
         "strings": strings,
         "autocomplete": autocomplete,
         "highlighting": highlighting,
         "offset": offset,
-        "limit": limit
+        "limit": limit,
+        "biolink_types": biolink_types or [],
+        "only_prefixes": only_prefixes or "",
+        "exclude_prefixes": exclude_prefixes or "",
+        "only_taxa": only_taxa or ""
     }
-    
-    if biolink_types:
-        payload["biolink_types"] = biolink_types
-    if only_prefixes:
-        payload["only_prefixes"] = only_prefixes
-    if exclude_prefixes:
-        payload["exclude_prefixes"] = exclude_prefixes
-    if only_taxa:
-        payload["only_taxa"] = only_taxa
     
     headers = {
         "Content-Type": "application/json",

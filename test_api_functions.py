@@ -136,20 +136,20 @@ class TestLookupNames:
             }
         ]
         
-        with patch('requests.post') as mock_post:
-            mock_post.return_value.json.return_value = mock_response
-            mock_post.return_value.raise_for_status.return_value = None
+        with patch('requests.get') as mock_get:
+            mock_get.return_value.json.return_value = mock_response
+            mock_get.return_value.raise_for_status.return_value = None
             
             result = lookup_names("doxorubicin")
             
             assert result == mock_response
-            mock_post.assert_called_once()
+            mock_get.assert_called_once()
     
     def test_lookup_with_filters(self):
         """Test lookup with filtering parameters."""
-        with patch('requests.post') as mock_post:
-            mock_post.return_value.json.return_value = []
-            mock_post.return_value.raise_for_status.return_value = None
+        with patch('requests.get') as mock_get:
+            mock_get.return_value.json.return_value = []
+            mock_get.return_value.raise_for_status.return_value = None
             
             lookup_names(
                 "doxorubicin",
@@ -160,15 +160,15 @@ class TestLookupNames:
             )
             
             # Check that URL parameters were constructed correctly
-            call_args = mock_post.call_args
+            call_args = mock_get.call_args
             url = call_args[0][0]
             assert "biolink_type=SmallMolecule" in url
             assert "limit=5" in url
     
     def test_request_exception(self):
         """Test request exception handling."""
-        with patch('requests.post') as mock_post:
-            mock_post.side_effect = requests.exceptions.RequestException("Network error")
+        with patch('requests.get') as mock_get:
+            mock_get.side_effect = requests.exceptions.RequestException("Network error")
             
             with pytest.raises(APIException, match="Name resolver lookup API request failed"):
                 lookup_names("doxorubicin")
