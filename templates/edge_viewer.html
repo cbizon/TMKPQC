@@ -1,0 +1,364 @@
+{% extends "base.html" %}
+
+{% block title %}{{ classification.title() }} Edges - TMKP Edge Reviewer{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1>
+            {{ classification.title() }} Edges
+            {% if classification == 'good' %}
+                <span class="badge bg-success classification-badge">Good</span>
+            {% elif classification == 'bad' %}
+                <span class="badge bg-danger classification-badge">Bad</span>
+            {% elif classification == 'ambiguous' %}
+                <span class="badge bg-warning text-dark classification-badge">Ambiguous</span>
+            {% endif %}
+        </h1>
+    </div>
+</div>
+
+{% if total_count > 0 %}
+<!-- Edge Type Toggle -->
+<div class="mb-3">
+    <div class="btn-group w-100" role="group" aria-label="Edge Type Navigation">
+        <a href="{{ url_for('view_edges', classification='good') }}" 
+           class="btn {% if classification == 'good' %}btn-success{% else %}btn-outline-success{% endif %}">
+            ✓ Good Edges
+        </a>
+        <a href="{{ url_for('view_edges', classification='bad') }}" 
+           class="btn {% if classification == 'bad' %}btn-danger{% else %}btn-outline-danger{% endif %}">
+            ✗ Bad Edges
+        </a>
+        <a href="{{ url_for('view_edges', classification='ambiguous') }}" 
+           class="btn {% if classification == 'ambiguous' %}btn-warning text-dark{% else %}btn-outline-warning{% endif %}">
+            ⚠ Ambiguous Edges
+        </a>
+    </div>
+</div>
+
+<div class="nav-buttons">
+    <div class="row align-items-center">
+        <div class="col-md-6">
+            <div class="btn-group" role="group">
+                <button id="prev-btn" class="btn btn-outline-primary" {% if current_index <= 0 %}disabled{% endif %}>
+                    ← Previous
+                </button>
+                <button id="next-btn" class="btn btn-outline-primary" {% if current_index >= total_count - 1 %}disabled{% endif %}>
+                    Next →
+                </button>
+            </div>
+        </div>
+        <div class="col-md-6 text-end">
+            <div class="d-flex align-items-center justify-content-end">
+                <span class="me-3">{{ classification.title() }} Edge {{ current_index + 1 }} of {{ total_count }}</span>
+                <div class="input-group" style="width: 150px;">
+                    <input type="number" id="goto-input" class="form-control" min="1" max="{{ total_count }}" value="{{ current_index + 1 }}">
+                    <button id="goto-btn" class="btn btn-outline-secondary">Go</button>
+                </div>
+                <button class="btn btn-sm btn-outline-secondary ms-2" data-bs-toggle="collapse" data-bs-target="#keyboard-help">
+                    ?
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Keyboard Shortcuts Help -->
+    <div class="collapse mt-2" id="keyboard-help">
+        <div class="card card-body bg-light">
+            <small>
+                <strong>Keyboard Shortcuts:</strong>
+                <span class="ms-2">← → Navigate edges</span>
+                <span class="ms-2">G = Good</span>
+                <span class="ms-2">B = Bad</span>
+                <span class="ms-2">A = Ambiguous</span>
+            </small>
+        </div>
+    </div>
+</div>
+
+{% if edge %}
+<div class="edge-content">
+    <div class="row">
+        <div class="col-md-12">
+            <h3>Edge Relationship</h3>
+            <div class="relationship-display p-3 mb-3" style="background-color: #e9ecef; border-radius: 5px;">
+                <div class="text-center">
+                    <div class="d-flex align-items-center justify-content-center">
+                        <div class="entity-box p-2 me-3" style="border: 2px solid #007bff; border-radius: 5px; background: white; min-width: 200px;">
+                            <strong>Subject:</strong><br>
+                            {{ edge.subject|format_entity_with_name(edge.subject_name)|safe }}
+                        </div>
+                        <div class="predicate-box p-2 me-3" style="border: 2px solid #28a745; border-radius: 5px; background: white; min-width: 200px;">
+                            <strong>Predicate:</strong><br>
+                            <span class="predicate">{{ edge.predicate }}</span>
+                            {% if edge.get('qualified_predicate') %}
+                                <br><small><strong>Qualified:</strong> {{ edge.qualified_predicate }}</small>
+                            {% endif %}
+                            {% if edge.get('object_direction_qualifier') %}
+                                <br><small><strong>Direction:</strong> {{ edge.object_direction_qualifier }}</small>
+                            {% endif %}
+                            {% if edge.get('object_aspect_qualifier') %}
+                                <br><small><strong>Aspect:</strong> {{ edge.object_aspect_qualifier }}</small>
+                            {% endif %}
+                        </div>
+                        <div class="entity-box p-2" style="border: 2px solid #dc3545; border-radius: 5px; background: white; min-width: 200px;">
+                            <strong>Object:</strong><br>
+                            {{ edge.object|format_entity_with_name(edge.object_name)|safe }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-8">
+            <h4>Supporting Text</h4>
+            <div class="sentence-text alert alert-light">
+                {{ edge.sentences|format_sentences|highlight_synonyms(edge)|safe }}
+            </div>
+            {% if edge.get('qc_debug') %}
+            <div class="mt-2">
+                <small class="text-muted">
+                    <strong>Legend:</strong> 
+                    <span style="background-color: #cce5ff; padding: 1px 3px; border-radius: 3px;">Subject synonyms</span>
+                    <span style="background-color: #ffcccb; padding: 1px 3px; border-radius: 3px;">Object synonyms</span>
+                    <em>(Click highlighted synonyms to see all matches)</em>
+                </small>
+            </div>
+            {% endif %}
+        </div>
+        <div class="col-md-4">
+            <h4>Metadata</h4>
+            <div class="edge-metadata">
+                <p><strong>Publications:</strong><br>
+                {{ edge.publications|format_publications|safe if edge.publications else "None" }}</p>
+                
+                {% if edge.get('biolink:tmkp_confidence_score') %}
+                <p><strong>Confidence Score:</strong><br>
+                {{ "%.4f"|format(edge['biolink:tmkp_confidence_score']) }}</p>
+                {% endif %}
+                
+                <p><strong>Knowledge Source:</strong><br>
+                {{ edge.primary_knowledge_source }}</p>
+                
+                <p><strong>Agent Type:</strong><br>
+                {{ edge.agent_type }}</p>
+                
+                {% if edge.get('qc_classification') %}
+                <p><strong>QC Classification:</strong><br>
+                <span class="badge 
+                    {% if edge.qc_classification == 'good' %}bg-success
+                    {% elif edge.qc_classification == 'bad' %}bg-danger
+                    {% else %}bg-warning text-dark{% endif %}">
+                    {{ edge.qc_classification.title() }}
+                </span></p>
+                {% endif %}
+                
+                {% if edge.get('qc_debug') and edge.qc_classification == 'ambiguous' %}
+                <p><strong>Ambiguous Entities:</strong><br>
+                {% if edge.qc_debug.get('subject_ambiguous') %}
+                    <span class="badge bg-primary me-1">Subject</span>
+                {% endif %}
+                {% if edge.qc_debug.get('object_ambiguous') %}
+                    <span class="badge bg-secondary">Object</span>
+                {% endif %}
+                {% if not edge.qc_debug.get('subject_ambiguous') and not edge.qc_debug.get('object_ambiguous') %}
+                    <small class="text-muted">No entity ambiguity flags set</small>
+                {% endif %}
+                </p>
+                {% endif %}
+                
+                {% if edge.get('edge_id') %}
+                <p><strong>Edge ID:</strong><br>
+                <small class="text-muted">{{ edge.edge_id }}</small></p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% else %}
+<div class="alert alert-info">
+    <h4>No {{ classification }} edges found</h4>
+    <p>There are no edges classified as "{{ classification }}" to review.</p>
+    <a href="{{ url_for('index') }}" class="btn btn-primary">Return to Home</a>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<!-- Modal for synonym lookup results -->
+<div class="modal fade" id="synonymModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Synonym Lookup Results</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="synonymModalBody">
+                <div class="text-center">
+                    <div class="spinner-border" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+$(document).ready(function() {
+    const classification = '{{ classification }}';
+    
+    function navigateEdge(action, index = null) {
+        const data = { action: action };
+        if (index !== null) {
+            data.index = index;
+        }
+        
+        $.ajax({
+            url: `/api/edges/${classification}/navigate`,
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify(data),
+            success: function(response) {
+                   if (response.success) {
+                       location.reload();
+                   } else {
+                       // Handle case where navigation failed (e.g., at end of list)
+                       console.log('Navigation failed');
+                   }
+            },
+            error: function() {
+                alert('Navigation failed');
+            }
+        });
+    }
+    
+    $('#prev-btn').click(function() {
+        navigateEdge('prev');
+    });
+    
+    $('#next-btn').click(function() {
+        navigateEdge('next');
+    });
+    
+    $('#goto-btn').click(function() {
+        const index = parseInt($('#goto-input').val()) - 1; // Convert to 0-based index
+        if (index >= 0 && index < {{ total_count }}) {
+            navigateEdge('goto', index);
+        } else {
+            alert('Invalid page number');
+        }
+    });
+    
+    // Handle Enter key in goto input
+    $('#goto-input').keypress(function(e) {
+        if (e.which == 13) { // Enter key
+            $('#goto-btn').click();
+        }
+    });
+    
+    // Keyboard shortcuts
+    $(document).keydown(function(e) {
+        if (e.target.tagName.toLowerCase() === 'input') {
+            return; // Don't handle shortcuts when typing in input
+        }
+        
+        switch(e.which) {
+            case 37: // Left arrow - Previous edge
+                if (!$('#prev-btn').prop('disabled')) {
+                    $('#prev-btn').click();
+                }
+                e.preventDefault();
+                break;
+            case 39: // Right arrow - Next edge
+                if (!$('#next-btn').prop('disabled')) {
+                    $('#next-btn').click();
+                }
+                e.preventDefault();
+                break;
+            case 71: // G key - Go to Good edges
+                window.location.href = "{{ url_for('view_edges', classification='good') }}";
+                e.preventDefault();
+                break;
+            case 66: // B key - Go to Bad edges
+                window.location.href = "{{ url_for('view_edges', classification='bad') }}";
+                e.preventDefault();
+                break;
+            case 65: // A key - Go to Ambiguous edges
+                window.location.href = "{{ url_for('view_edges', classification='ambiguous') }}";
+                e.preventDefault();
+                break;
+        }
+    });
+    
+    // Handle synonym clicks
+    $(document).on('click', '.synonym-highlight', function(e) {
+        e.preventDefault();
+        const synonym = $(this).text().trim();
+        const synonymType = $(this).hasClass('subject-synonym') ? 'Subject' : 'Object';
+        
+        // Show modal with loading
+        $('#synonymModal .modal-title').text(`Lookup Results for "${synonym}" (${synonymType} Synonym)`);
+        $('#synonymModalBody').html('<div class="text-center"><div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div></div>');
+        $('#synonymModal').modal('show');
+        
+        // Fetch lookup results using stored data from edge
+        const entityType = $(this).hasClass('subject-synonym') ? 'subject' : 'object';
+        const currentIndex = {{ current_index }};
+        const classification = '{{ classification }}';
+        
+        $.get(`/api/lookup/${classification}/${currentIndex}/${entityType}/${encodeURIComponent(synonym)}`)
+            .done(function(data) {
+                if (data.success) {
+                    let html = `<div class="alert alert-info">${data.note}</div>`;
+                    html += `<div class="mb-2"><strong>Found ${data.count} exact matches used in classification</strong></div>`;
+                    
+                    if (data.results.length > 0) {
+                        html += '<div class="list-group">';
+                        data.results.forEach(function(result, index) {
+                            const taxaText = result.taxa.length > 0 ? 
+                                result.taxa.map(t => t.replace('NCBITaxon:', 'Taxon:')).join(', ') : 
+                                'No taxonomy';
+                            const typesText = result.types.length > 0 ? result.types.join(', ') : 'No types';
+                            const synonymsText = result.synonyms.length > 0 ? result.synonyms.join(', ') : 'No synonyms';
+                            
+                            html += `
+                                <div class="list-group-item">
+                                    <div class="d-flex w-100 justify-content-between">
+                                        <h6 class="mb-1">${index + 1}. ${result.curie} - ${result.label}</h6>
+                                        <small class="text-muted">Score: ${result.score.toFixed(2)}</small>
+                                    </div>
+                                    <p class="mb-1"><strong>Taxa:</strong> ${taxaText}</p>
+                                    <p class="mb-1"><strong>Types:</strong> ${typesText}</p>
+                                    <small class="text-muted"><strong>Synonyms:</strong> ${synonymsText}</small>
+                                </div>
+                            `;
+                        });
+                        html += '</div>';
+                        
+                        if (data.count > 1) {
+                            html += '<div class="alert alert-warning mt-3"><strong>⚠️ Multiple exact matches!</strong> This synonym is ambiguous and maps to different entities, which is why this edge is classified as ambiguous.</div>';
+                        } else if (data.count === 1) {
+                            html += '<div class="alert alert-success mt-3"><strong>✓ Single exact match</strong> This synonym is unambiguous.</div>';
+                        }
+                    } else {
+                        html += '<div class="alert alert-secondary">No exact matches found in stored data.</div>';
+                    }
+                    
+                    $('#synonymModalBody').html(html);
+                } else {
+                    $('#synonymModalBody').html(`<div class="alert alert-danger">Error: ${data.error}</div>`);
+                }
+            })
+            .fail(function() {
+                $('#synonymModalBody').html('<div class="alert alert-danger">Failed to fetch lookup results.</div>');
+            });
+    });
+});
+</script>
+{% endblock %}

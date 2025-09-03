@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block title %}TMKP Edge Reviewer - Home{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1>TMKP Edge Quality Control Reviewer</h1>
+        <p class="lead">Review edges classified by the Phase 1 entity identification system.</p>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-md-4">
+        <div class="card border-success">
+            <div class="card-header bg-success text-white">
+                <h5 class="card-title mb-0">Good Edges</h5>
+            </div>
+            <div class="card-body">
+                <h2 class="text-success">{{ summary.good }}</h2>
+                <p class="card-text">Edges where both entities were clearly identified in the supporting text.</p>
+                {% if summary.good > 0 %}
+                <a href="{{ url_for('view_edges', classification='good') }}" class="btn btn-success">Review Good Edges</a>
+                {% else %}
+                <button class="btn btn-success" disabled>No Good Edges</button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card border-danger">
+            <div class="card-header bg-danger text-white">
+                <h5 class="card-title mb-0">Bad Edges</h5>
+            </div>
+            <div class="card-body">
+                <h2 class="text-danger">{{ summary.bad }}</h2>
+                <p class="card-text">Edges where entities could not be identified in the supporting text.</p>
+                {% if summary.bad > 0 %}
+                <a href="{{ url_for('view_edges', classification='bad') }}" class="btn btn-danger">Review Bad Edges</a>
+                {% else %}
+                <button class="btn btn-danger" disabled>No Bad Edges</button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card border-warning">
+            <div class="card-header bg-warning text-dark">
+                <h5 class="card-title mb-0">Ambiguous Edges</h5>
+            </div>
+            <div class="card-body">
+                <h2 class="text-warning">{{ summary.ambiguous }}</h2>
+                <p class="card-text">Edges where entity identification was ambiguous or uncertain.</p>
+                {% if summary.ambiguous > 0 %}
+                <a href="{{ url_for('view_edges', classification='ambiguous') }}" class="btn btn-warning">Review Ambiguous Edges</a>
+                {% else %}
+                <button class="btn btn-warning" disabled>No Ambiguous Edges</button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5>Summary Statistics</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3">
+                        <strong>Total Edges:</strong> {{ summary.total }}
+                    </div>
+                    <div class="col-md-3">
+                        <strong>Good:</strong> {{ "%.1f"|format((summary.good / summary.total * 100) if summary.total > 0 else 0) }}%
+                    </div>
+                    <div class="col-md-3">
+                        <strong>Bad:</strong> {{ "%.1f"|format((summary.bad / summary.total * 100) if summary.total > 0 else 0) }}%
+                    </div>
+                    <div class="col-md-3">
+                        <strong>Ambiguous:</strong> {{ "%.1f"|format((summary.ambiguous / summary.total * 100) if summary.total > 0 else 0) }}%
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if summary.total == 0 %}
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="alert alert-warning">
+            <h4>No classified edges found</h4>
+            <p>It looks like you haven't run the Phase 1 classification yet. To generate classified edges:</p>
+            <ol>
+                <li>Make sure you have the <code>tmkp_edges.jsonl</code> and <code>tmkp_nodes.jsonl</code> files</li>
+                <li>Run: <code>python phase1.py --edges tmkp_edges.jsonl --nodes tmkp_nodes.jsonl --max-edges 100</code></li>
+                <li>Refresh this page to see the results</li>
+            </ol>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5>Actions</h5>
+            </div>
+            <div class="card-body">
+                <button id="reload-btn" class="btn btn-secondary">Reload Edge Data</button>
+                <p class="mt-2 mb-0"><small class="text-muted">Click to reload if you've run new classifications</small></p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+$(document).ready(function() {
+    $('#reload-btn').click(function() {
+        $(this).prop('disabled', true).text('Reloading...');
+        
+        $.get('{{ url_for("reload_edges") }}')
+            .done(function(data) {
+                location.reload();
+            })
+            .fail(function() {
+                alert('Failed to reload edge data');
+                $('#reload-btn').prop('disabled', false).text('Reload Edge Data');
+            });
+    });
+});
+</script>
+{% endblock %}

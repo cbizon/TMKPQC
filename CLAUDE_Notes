@@ -1,0 +1,690 @@
+We are working on QC for a set of knowledge graph edges. For each edge we want to decide if it is good, bad, or uncertain.  The edges are found in tmkp_edges.json and the nodes are found in tmkp_nodes.json.
+
+Here is a node:
+{"id":"CHEBI:28748","name":"doxorubicin","category":["biolink:SmallMolecule","biolink:MolecularEntity","biolink:ChemicalEntity","biolink:PhysicalEssence","biolink:ChemicalOrDrugOrTreatment","biolink:ChemicalEntityOrGeneOrGeneProduct","biolink:ChemicalEntityOrProteinOrPolypeptide","biolink:NamedThing","biolink:PhysicalEssenceOrOccurrent"],"equivalent_identifiers":["CHEBI:28748","PUBCHEM.COMPOUND:31703","CHEMBL.COMPOUND:CHEMBL53463","UNII:80168379AG","DRUGBANK:DB00997","MESH:D004317","CAS:1392315-46-6","CAS:23214-92-8","DrugCentral:960","GTOPDB:7069","HMDB:HMDB0015132","KEGG.COMPOUND:C01661","INCHIKEY:AOJJSUZBOXZQNB-TZSSRYMLSA-N","UMLS:C0013089","RXCUI:3639"],"information_content":83.1}
+
+This node is identified as "CHEBI:28748" which is a SmallMolecule called doxorubicin.
+
+Here is an edge:
+{"subject":"CHEBI:28748","predicate":"biolink:affects","object":"UniProtKB:P18887","primary_knowledge_source":"infores:text-mining-provider-targeted","publications":["PMID:28258155","PMID:34783124","PMID:29929045"],"biolink:tmkp_confidence_score":0.9983171550000001,"sentences":"The significant increase in CDKN1A and XRCC1 suggest a cell cycle arrest and implies an alternative NHEJ pathway in response to doxorubicin-induced DNA breaks.|NA|However, FANCD2, BRCA1 and XRCC1 foci, prominently associated with 53BP1 foci and hence DSBs resolved by cNHEJ, were only detected in doxorubicin-treated XRCC4-deficient cells.|NA","tmkp_ids":["tmkp:ae3877b6ed48c7afbc0991e8578f84513dd12cacb2bb6a485df182d33d4d4e7f","tmkp:5fd679cb1d20061fa8cbc5fab5f65c1581afd2e6436cef845ca4f2a7f95e353f","tmkp:bb27255bd16ceeab7135e5b967f5a9b28fd98024c4152a494c6c341dec11bf01","tmkp:0792c702bebbc0eea6d08d4c1b4911679ae23b03775b11345d868db6cf670fe4","tmkp:551578d2b184d7e406e3b2f81a800c880fe80a93283abbbe55e8573c2228687a"],"knowledge_level":"not_provided","agent_type":"text_mining_agent","qualified_predicate":"biolink:causes","object_aspect_qualifier":"activity_or_abundance","object_direction_qualifier":"increased"}
+
+This edge asserts that CHEBI:28748 affects (by increasing its activity or abundance) UniProtKB:P18887.  This is supposedly derived from 3 publications, and the sentences from those publicatiosn are listed.
+
+The text mining agent that has extracted this edge from these papers frequently makes mistakes and it is our job to find them.  Examples of the kinds of mistakes that are frequently made are 
+1) misidentification of entities in the text.  many genes have many historical names and finding exactly the right one can be hard
+2) inverting the edges.  Sometimes the text will say A increases B but the edge will say B increases A.
+3) Unsupported relationships. Sometimes the edge will say increased when the text implies decreased. Or an associated edge will be created when the text implies no relationships between the entities.
+
+To address these issues we are going to try to take a two pronged approach.  We could ask an LLM to review each edge, and that works ok, but it is slow and we want to limit quite how much work we are asking the LLM to do.  So we are going to take a multiphase approach.
+
+In the first phase we are going to examine whether the subject and object are the things mentioned in the text, whether they have been misidentified, or whether we cannot tell.
+
+Our main tools in this are going to be two APIs.  One is nodenormalizer found here: https://nodenormalization-sri.renci.org/docs#/. We are only interested in the get_normalized_nodes function, and especially in its POST implementation, which is much more efficient.  This function takes one CURIE and returns every other CURIE that it knows about for the same concept.  Here is an example payload:
+{
+  "curies": [
+    "MESH:D014867",
+    "NCIT:C34373"
+  ],
+  "conflate": true,
+  "description": false,
+  "drug_chemical_conflate": true
+}
+In this payload we are sending two curies that we want to ask about.  We are also saying to merge certain types of entities (conflation) and we always want these to be true. always.
+
+The result of this query will look like:
+{
+  "MESH:D014867": {
+    "id": {
+      "identifier": "CHEBI:15377",
+      "label": "Water"
+    },
+    "equivalent_identifiers": [
+      {
+        "identifier": "CHEBI:15377",
+        "label": "water"
+      },
+      {
+        "identifier": "UNII:059QF0KO0R",
+        "label": "WATER"
+      },
+      {
+        "identifier": "PUBCHEM.COMPOUND:962",
+        "label": "Water"
+      },
+      {
+        "identifier": "CHEMBL.COMPOUND:CHEMBL1098659",
+        "label": "WATER"
+      },
+      {
+        "identifier": "DRUGBANK:DB09145",
+        "label": "Water"
+      },
+      {
+        "identifier": "MESH:D014867",
+        "label": "Water"
+      },
+      {
+        "identifier": "CAS:231-791-2"
+      },
+      {
+        "identifier": "CAS:7732-18-5"
+      },
+      {
+        "identifier": "HMDB:HMDB0002111",
+        "label": "Water"
+      },
+      {
+        "identifier": "KEGG.COMPOUND:C00001",
+        "label": "H2O"
+      },
+      {
+        "identifier": "INCHIKEY:XLYOFNOQVPJJNP-UHFFFAOYSA-N"
+      },
+      {
+        "identifier": "UMLS:C0043047",
+        "label": "water"
+      },
+      {
+        "identifier": "RXCUI:11295"
+      }
+    ],
+    "type": [
+      "biolink:SmallMolecule",
+      "biolink:MolecularEntity",
+      "biolink:ChemicalEntity",
+      "biolink:PhysicalEssence",
+      "biolink:ChemicalOrDrugOrTreatment",
+      "biolink:ChemicalEntityOrGeneOrGeneProduct",
+      "biolink:ChemicalEntityOrProteinOrPolypeptide",
+      "biolink:NamedThing",
+      "biolink:PhysicalEssenceOrOccurrent"
+    ],
+    "information_content": 47.7
+  },
+  "NCIT:C34373": {
+    "id": {
+      "identifier": "MONDO:0004976",
+      "label": "amyotrophic lateral sclerosis"
+    },
+    "equivalent_identifiers": [
+      {
+        "identifier": "MONDO:0004976",
+        "label": "amyotrophic lateral sclerosis"
+      },
+      {
+        "identifier": "DOID:332",
+        "label": "amyotrophic lateral sclerosis"
+      },
+      {
+        "identifier": "orphanet:803"
+      },
+      {
+        "identifier": "UMLS:C0002736",
+        "label": "Amyotrophic Lateral Sclerosis"
+      },
+      {
+        "identifier": "MESH:D000690",
+        "label": "Amyotrophic Lateral Sclerosis"
+      },
+      {
+        "identifier": "MEDDRA:10002026"
+      },
+      {
+        "identifier": "MEDDRA:10052889"
+      },
+      {
+        "identifier": "NCIT:C34373",
+        "label": "Amyotrophic Lateral Sclerosis"
+      },
+      {
+        "identifier": "SNOMEDCT:86044005"
+      },
+      {
+        "identifier": "medgen:274"
+      },
+      {
+        "identifier": "icd11.foundation:1982355687"
+      },
+      {
+        "identifier": "ICD10:G12.21"
+      },
+      {
+        "identifier": "ICD9:335.20"
+      },
+      {
+        "identifier": "KEGG.DISEASE:05014"
+      },
+      {
+        "identifier": "HP:0007354",
+        "label": "Amyotrophic lateral sclerosis"
+      }
+    ],
+    "type": [
+      "biolink:Disease",
+      "biolink:DiseaseOrPhenotypicFeature",
+      "biolink:BiologicalEntity",
+      "biolink:ThingWithTaxon",
+      "biolink:NamedThing"
+    ],
+    "information_content": 74.9
+  }
+}
+
+Notice that each entity returns a list of other identifiers.  Note also that types are returned. These are ordered, and we are always interested in the first element in the list, which should be the most specific. Note also that each input has an id element - this contains the preferred identifier for the clique of identifiers.
+
+The other tool of interest is name resolver found here:  https://name-resolution-sri-dev.apps.renci.org/docs#.  This API has 2 functions of interest:  
+1) lookup: Take a string and return possible curies that match
+2) synonyms: Take a curie (which must be the preferred id from nodenorm) and return all known lexical synonyms for that curie.
+
+Synonyms Input:
+{
+  "preferred_curies": [
+    "MONDO:0005737",
+    "MONDO:0009757"
+  ]
+}
+Synonyms Output:
+{
+  "MONDO:0005737": {
+    "curie": "MONDO:0005737",
+    "names": [
+      "EHF",
+      "Ebola",
+      "Ebola fever",
+      "Ebola disease",
+      "disease ebola",
+      "EBOLA VIRUS DIS",
+      "Ebola Infection",
+      "Infection, Ebola",
+      "Ebola virus disease",
+      "Ebola Virus Disease",
+      "ebola virus disease",
+      "Ebolavirus Infection",
+      "Infection, Ebolavirus",
+      "Ebola Virus Infection",
+      "Ebola virus infection",
+      "Ebolavirus Infections",
+      "ebola virus infection",
+      "Infection, Ebola Virus",
+      "Infections, Ebolavirus",
+      "Virus Infection, Ebola",
+      "Ebola Hemorrhagic Fever",
+      "ebola fever hemorrhagic",
+      "ebola hemorrhagic fever",
+      "Ebola hemorrhagic fever",
+      "Ebola haemorrhagic fever",
+      "Hemorrhagic Fever, Ebola",
+      "ebola haemorrhagic fever",
+      "EVD - Ebola virus disease",
+      "Ebolavirus infectious disease",
+      "Ebola virus hemorrhagic fever",
+      "Ebolavirus disease or disorder",
+      "Viral hemorrhagic fever, Ebola",
+      "Ebola virus disease (disorder)",
+      "Viral haemorrhagic fever, Ebola",
+      "Ebolavirus caused disease or disorder",
+      "Ebola virus hemorrhagic fever (diagnosis)"
+    ],
+    "names_exactish": [
+      "EHF",
+      "Ebola",
+      "Ebola fever",
+      "Ebola disease",
+      "disease ebola",
+      "EBOLA VIRUS DIS",
+      "Ebola Infection",
+      "Infection, Ebola",
+      "Ebola virus disease",
+      "Ebola Virus Disease",
+      "ebola virus disease",
+      "Ebolavirus Infection",
+      "Infection, Ebolavirus",
+      "Ebola Virus Infection",
+      "Ebola virus infection",
+      "Ebolavirus Infections",
+      "ebola virus infection",
+      "Infection, Ebola Virus",
+      "Infections, Ebolavirus",
+      "Virus Infection, Ebola",
+      "Ebola Hemorrhagic Fever",
+      "ebola fever hemorrhagic",
+      "ebola hemorrhagic fever",
+      "Ebola hemorrhagic fever",
+      "Ebola haemorrhagic fever",
+      "Hemorrhagic Fever, Ebola",
+      "ebola haemorrhagic fever",
+      "EVD - Ebola virus disease",
+      "Ebolavirus infectious disease",
+      "Ebola virus hemorrhagic fever",
+      "Ebolavirus disease or disorder",
+      "Viral hemorrhagic fever, Ebola",
+      "Ebola virus disease (disorder)",
+      "Viral haemorrhagic fever, Ebola",
+      "Ebolavirus caused disease or disorder",
+      "Ebola virus hemorrhagic fever (diagnosis)"
+    ],
+    "types": [
+      "Disease",
+      "DiseaseOrPhenotypicFeature",
+      "BiologicalEntity",
+      "ThingWithTaxon",
+      "NamedThing",
+      "Entity"
+    ],
+    "preferred_name": "Ebola hemorrhagic fever",
+    "shortest_name_length": 3,
+    "clique_identifier_count": 15,
+    "curie_suffix": 5737,
+    "id": "259aaf70-b8a3-4cec-adf9-aa886867be29",
+    "_version_": 1841051406731051000
+  },
+  "MONDO:0009757": {
+    "curie": "MONDO:0009757",
+    "names": [
+      "NPC1",
+      "NIEMANN PICK DIS TYPE D",
+      "NIEMANN PICKS DIS TYPE D",
+      "Niemann Pick Type D Disease",
+      "Niemann-Pick disease type D",
+      "Niemann pick disease type D",
+      "Niemann Pick Disease Type D",
+      "Niemann-Pick Disease Type D",
+      "Niemann-Pick Type D Disease",
+      "Niemann-Pick Disease, Type D",
+      "Niemann-Pick disease, type D",
+      "Niemann-Pick disease, type C",
+      "Type C1 Niemann-Pick Disease",
+      "Niemann-Pick disease type C1",
+      "Niemann Pick Disease, Type D",
+      "NIEMANN-PICK DISEASE, TYPE D",
+      "type C1 Niemann-Pick disease",
+      "Niemann Pick's Disease Type D",
+      "Niemann-Pick's Disease Type D",
+      "NIEMANN-PICK DISEASE, TYPE C1",
+      "Niemann-Pick disease, type C1",
+      "Niemann-Pick Disease, Type C1",
+      "Niemann-PICK disease, type C1",
+      "NIEMANN PICK DIS NOVE SCOTIAN",
+      "Niemann Pick Disease, Type C1",
+      "Niemann Pick Disease, Nova Scotian",
+      "Niemann-Pick Disease, Nova Scotian",
+      "Niemann-Pick disease, Nova Scotian",
+      "Niemann-Pick disease, type D (disorder)",
+      "Niemann-Pick disease type D (diagnosis)",
+      "Niemann-Pick Disease, Nova Scotian Type",
+      "Niemann-Pick disease, nova Scotian type",
+      "NIEMANN-PICK DISEASE, NOVA SCOTIAN TYPE",
+      "Niemann-Pick disease type C1 (diagnosis)",
+      "Nova Scotia Niemann-Pick Disease (Type D)",
+      "Nova Scotia Niemann Pick Disease (Type D)",
+      "Niemann-Pick disease, type C, subacute form",
+      "Niemann Pick disease, Subacute Juvenile Form",
+      "Niemann-Pick disease, subacute juvenile form",
+      "Niemann-Pick disease, Subacute Juvenile Form",
+      "NIEMANN-PICK DISEASE, SUBACUTE JUVENILE FORM",
+      "Niemann-Pick disease, chronic neuronopathic form",
+      "Nova Scotia (Type D) Form of Niemann-Pick Disease",
+      "Niemann-Pick disease, type C, subacute form (disorder)",
+      "Niemann-Pick disease without sphingomyelinase deficiency",
+      "Niemann-Pick disease with cholesterol esterification block",
+      "neurovisceral storage disease with vertical supranuclear ophthalmoplegia"
+    ],
+    "names_exactish": [
+      "NPC1",
+      "NIEMANN PICK DIS TYPE D",
+      "NIEMANN PICKS DIS TYPE D",
+      "Niemann Pick Type D Disease",
+      "Niemann-Pick disease type D",
+      "Niemann pick disease type D",
+      "Niemann Pick Disease Type D",
+      "Niemann-Pick Disease Type D",
+      "Niemann-Pick Type D Disease",
+      "Niemann-Pick Disease, Type D",
+      "Niemann-Pick disease, type D",
+      "Niemann-Pick disease, type C",
+      "Type C1 Niemann-Pick Disease",
+      "Niemann-Pick disease type C1",
+      "Niemann Pick Disease, Type D",
+      "NIEMANN-PICK DISEASE, TYPE D",
+      "type C1 Niemann-Pick disease",
+      "Niemann Pick's Disease Type D",
+      "Niemann-Pick's Disease Type D",
+      "NIEMANN-PICK DISEASE, TYPE C1",
+      "Niemann-Pick disease, type C1",
+      "Niemann-Pick Disease, Type C1",
+      "Niemann-PICK disease, type C1",
+      "NIEMANN PICK DIS NOVE SCOTIAN",
+      "Niemann Pick Disease, Type C1",
+      "Niemann Pick Disease, Nova Scotian",
+      "Niemann-Pick Disease, Nova Scotian",
+      "Niemann-Pick disease, Nova Scotian",
+      "Niemann-Pick disease, type D (disorder)",
+      "Niemann-Pick disease type D (diagnosis)",
+      "Niemann-Pick Disease, Nova Scotian Type",
+      "Niemann-Pick disease, nova Scotian type",
+      "NIEMANN-PICK DISEASE, NOVA SCOTIAN TYPE",
+      "Niemann-Pick disease type C1 (diagnosis)",
+      "Nova Scotia Niemann-Pick Disease (Type D)",
+      "Nova Scotia Niemann Pick Disease (Type D)",
+      "Niemann-Pick disease, type C, subacute form",
+      "Niemann Pick disease, Subacute Juvenile Form",
+      "Niemann-Pick disease, subacute juvenile form",
+      "Niemann-Pick disease, Subacute Juvenile Form",
+      "NIEMANN-PICK DISEASE, SUBACUTE JUVENILE FORM",
+      "Niemann-Pick disease, chronic neuronopathic form",
+      "Nova Scotia (Type D) Form of Niemann-Pick Disease",
+      "Niemann-Pick disease, type C, subacute form (disorder)",
+      "Niemann-Pick disease without sphingomyelinase deficiency",
+      "Niemann-Pick disease with cholesterol esterification block",
+      "neurovisceral storage disease with vertical supranuclear ophthalmoplegia"
+    ],
+    "types": [
+      "Disease",
+      "DiseaseOrPhenotypicFeature",
+      "BiologicalEntity",
+      "ThingWithTaxon",
+      "NamedThing",
+      "Entity"
+    ],
+    "preferred_name": "Niemann-Pick disease, type C1",
+    "shortest_name_length": 4,
+    "clique_identifier_count": 12,
+    "curie_suffix": 9757,
+    "id": "dcc793c5-8579-4773-a4e5-7819e0f9943b",
+    "_version_": 1841051436057624600
+  }
+}
+
+In these outputs we are interested in "names" and especially "preferred_name".
+
+Lookup input:
+curl -X 'POST' \
+  'https://name-resolution-sri-dev.apps.renci.org/lookup?string=doxorubicin&autocomplete=false&highlighting=false&offset=0&limit=10&biolink_type=SmallMolecule' \
+  -H 'accept: application/json' \
+  -d ''
+
+Lookup output:
+[
+  {
+    "curie": "CHEBI:28748",
+    "label": "Doxorubicin",
+    "highlighting": {},
+    "synonyms": [
+      "ADM",
+      "ADR",
+      "adr",
+      ...
+    ],
+    "taxa": [],
+    "types": [
+      "biolink:SmallMolecule",
+      "biolink:MolecularEntity",
+      "biolink:ChemicalEntity",
+      "biolink:PhysicalEssence",
+      "biolink:ChemicalOrDrugOrTreatment",
+      "biolink:ChemicalEntityOrGeneOrGeneProduct",
+      "biolink:ChemicalEntityOrProteinOrPolypeptide",
+      "biolink:NamedThing",
+      "biolink:Entity",
+      "biolink:PhysicalEssenceOrOccurrent",
+      "biolink:MolecularMixture",
+      "biolink:ChemicalMixture",
+      "biolink:Drug",
+      "biolink:OntologyClass"
+    ],
+    "score": 9395.258,
+    "clique_identifier_count": 132
+  },
+  {
+    "curie": "CHEBI:64816",
+    "label": "doxorubicin(1+)",
+    "highlighting": {},
+    "synonyms": [
+      "doxorubicin",
+      "Doxorubicin(1+)",
+      "doxorubicin(1+)",
+      "doxorubicin cation",
+      "(1S,3S)-3,5,12-trihydroxy-3-(hydroxyacetyl)-10-methoxy-6,11-dioxo-1,2,3,4,6,11-hexahydrotetracen-1-yl 3-azaniumyl-2,3,6-trideoxy-alpha-L-lyxo-hexopyranoside"
+    ],
+    "taxa": [],
+    "types": [
+      "biolink:SmallMolecule",
+      "biolink:MolecularEntity",
+      "biolink:ChemicalEntity",
+      "biolink:PhysicalEssence",
+      "biolink:ChemicalOrDrugOrTreatment",
+      "biolink:ChemicalEntityOrGeneOrGeneProduct",
+      "biolink:ChemicalEntityOrProteinOrPolypeptide",
+      "biolink:NamedThing",
+      "biolink:Entity",
+      "biolink:PhysicalEssenceOrOccurrent"
+    ],
+    "score": 447.1852,
+    "clique_identifier_count": 3
+  },
+
+There are other options that we will want to take advantage of, like the ability to limit to a particular biolink class or taxon (human is NCBITaxon:9606)
+
+---
+
+## Environment Setup
+
+We use a conda environment called TMKP2 for this project. To set up:
+
+```bash
+conda env create -f environment.yml
+conda activate TMKP2
+```
+
+## Code Structure
+
+The implemented code structure is as follows:
+
+### Core Files
+
+**api_functions.py**: Contains functions to call the external APIs
+- `get_normalized_nodes()`: POST implementation for node normalization with batching (10k entities per batch)
+- `get_synonyms()`: POST implementation for synonym retrieval with batching (10k entities per batch) 
+- `lookup_names()`: Name resolution lookup with filtering options (biolink_type, taxa, etc.)
+- `batch_get_normalized_nodes()` and `batch_get_synonyms()`: Batch processing wrappers
+- `get_exact_matches()`: Helper to filter lookup results (deprecated - replaced with exact synonym matching)
+
+**phase1.py**: Implements the Phase 1 entity identification logic
+- `EdgeClassifier` class with the following key methods:
+  - `load_data()`: Loads edges and nodes from JSONL files
+  - `collect_entities()`: Collects unique subject/object entities
+  - `get_normalized_data()`: Batch calls to normalize entities and get synonyms
+  - `find_synonyms_in_text()`: Finds entity synonyms in supporting text using word boundaries
+  - `check_ambiguous_matches()`: **Enhanced logic** - checks if synonyms map to multiple distinct entities using exact string matching with preferred name preference. For genes, filters by human taxon (NCBITaxon:9606)
+  - `classify_edge()`: Main classification logic returning (classification, debug_info) tuple
+  - `process_all_edges()`: Processes all edges and writes results to output files
+- Outputs: `good_edges.jsonl`, `bad_edges.jsonl`, `ambiguous_edges.jsonl` with embedded entity names and debug info
+
+**webapp.py**: Flask web application for reviewing classified edges
+- `EdgeReviewer` class to manage edge loading and navigation
+- **Routes**:
+  - `/` - Home page showing summary statistics
+  - `/edges/<classification>` - View edges by type (good/bad/ambiguous) 
+  - `/api/edges/<classification>/navigate` - Navigation API for prev/next/goto
+  - `/api/lookup/<classification>/<int:index>/<entity_type>/<query>` - **Updated**: Uses stored lookup data from Phase 1 (no API calls)
+  - `/api/reload` - Reload edges from files
+- **Features**:
+  - Navigation with arrow keys and buttons
+  - Toggle between edge types with keyboard shortcuts (G/B/A keys)
+  - **Interactive synonym highlighting**: Click highlighted synonyms to see stored lookup data
+  - **Consistency guarantee**: Shows exactly the same data used for classification decisions
+  - Entity names embedded in display alongside CURIEs
+  - Bootstrap UI with responsive design
+  - **Runs on port 5000** (http://localhost:5000)
+- **Important**: All API imports removed - webapp uses only stored data from Phase 1
+
+### Test Files
+
+**test_api_functions.py**: Comprehensive tests for API functions (80+ test cases)
+- Tests for all API wrapper functions with mocking
+- Error handling, timeout, and edge case testing
+- Batch processing validation
+
+**test_phase1.py**: Tests for Phase 1 classification logic (23+ test cases)
+- `TestEdgeClassifier`: Unit tests for individual methods
+- `TestEdgeClassifierIntegration`: Integration tests including full dataset processing
+- **Updated**: `test_check_ambiguous_matches_with_exact_synonyms` - Tests the enhanced ambiguous synonym detection logic with exact string matching and taxon filtering
+- **Updated**: `test_lookup_data_storage_comprehensive` - Tests lookup data storage functionality with enhanced preferred name logic
+- **New**: `test_gene_taxon_filtering` - Tests human taxon filtering for gene disambiguation
+- **New**: Enhanced preferred name logic test suite:
+  - `test_enhanced_preferred_name_logic_doxorubicin_case` - Tests case where one match has preferred name
+  - `test_enhanced_preferred_name_logic_fsh_case` - Tests case where multiple matches have preferred name
+  - `test_enhanced_preferred_name_logic_no_preferred_match` - Tests case with no preferred name matches
+  - `test_enhanced_preferred_name_logic_case_insensitive` - Tests case-insensitive preferred name matching
+  - `test_enhanced_preferred_name_logic_single_match_unchanged` - Tests single match behavior unchanged
+
+### Configuration Files
+
+**environment.yml**: Conda environment specification for TMKP2
+- Python 3.9 with required packages: requests, flask, pytest, etc.
+
+### Key Implementation Details
+
+**Enhanced Ambiguous Synonym Detection**: The system uses strict exact synonym matching with preferred name preference logic. When looking up a synonym (e.g., "PD-1"):
+1. Get all lookup results from name resolver API  
+2. Filter to only results that have the **exact string** as a separate element in their synonyms list
+   - Uses Python `in` operator: `synonym in result['synonyms']` 
+   - **NOT substring matching**: "doxorubicin" will NOT match "Zoptarelin doxorubicin" 
+   - **Exact element matching**: Only matches if "doxorubicin" appears as a complete synonym
+3. **Enhanced ambiguity resolution**: If multiple entities have the exact synonym:
+   - Check if exactly ONE entity has the synonym as its preferred name (case-insensitive)
+   - If so, prefer that entity (NOT ambiguous) - e.g., "Doxorubicin" vs "doxorubicin(1+)"
+   - If zero or multiple entities have the synonym as preferred name, remain ambiguous
+4. For genes, apply human taxon filter (NCBITaxon:9606) to avoid species confusion
+5. **Case-insensitive preferred name matching**: "doxorubicin" matches preferred name "Doxorubicin"
+
+**Performance Optimizations**: 
+- Entity names are embedded directly in output files (no runtime loading of 195k nodes)
+- Batch API processing (10k entities per request)
+- Synonym data cached in memory during processing
+
+**Interactive Features**:
+- **Synonym highlighting**: Color-coded synonyms (blue=subject, red=object) that are clickable
+- **Lookup modal**: Shows stored lookup data from Phase 1 when clicking highlighted synonyms
+- **Consistency**: Webapp displays exactly what was used for classification decisions
+- **Ambiguity display**: For ambiguous entities, shows ALL matches regardless of which synonym was clicked
+
+## Recent Improvements (Latest Session)
+
+**Problem Solved**: Fixed inconsistency between Phase 1 classification logic and webapp display logic.
+
+**Root Issues**:
+1. **Logic duplication**: Webapp was making separate API calls instead of using Phase 1 classification data
+2. **Inconsistent results**: User found "doxorubicin" showing results that didn't match classification logic
+3. **Ambiguity mismatch**: Entities marked as ambiguous but webapp showing single matches
+
+**Key Changes Made**:
+
+### Phase 1 Updates
+- **Modified `check_ambiguous_matches()`**: Now returns tuple `(is_ambiguous, lookup_data)` 
+- **Added lookup data storage**: All exact synonym matches are stored in edge debug info
+- **Added `_format_lookup_result()` helper**: Consistent result formatting and code deduplication
+- **Enhanced debug info**: Includes `subject_lookup_data` and `object_lookup_data` dictionaries
+
+### Webapp Updates  
+- **Removed all API imports**: No more `from api_functions import lookup_names`
+- **Updated lookup endpoint**: `/api/lookup/<classification>/<index>/<entity_type>/<query>` uses stored data
+- **Entity-level results**: Shows ALL matches for entity (combining synonym variants) not per-synonym
+- **Perfect consistency**: Webapp can only show what Phase 1 actually used for decisions
+
+### Test Coverage
+- **Updated existing tests**: Modified for new `check_ambiguous_matches()` return format
+- **Added comprehensive tests**: `test_lookup_data_storage_comprehensive()` with multiple ambiguous synonyms
+- **Added gene filtering tests**: `test_gene_taxon_filtering()` for human taxon filtering
+
+### Code Quality
+- **Extracted helper method**: `_format_lookup_result()` eliminates code duplication
+- **Consistent formatting**: All lookup results use same formatting logic
+- **Enhanced documentation**: Updated CLAUDE_Notes with latest architecture
+
+**Result**: Perfect consistency between classification decisions and webapp display. No more mysterious mismatches or duplicate API logic.
+
+## Latest Enhancement (Current Session)
+
+**Enhancement Implemented**: Enhanced ambiguity logic to prefer entities with preferred synonyms.
+
+**Problem Addressed**: The previous logic treated all exact synonym matches as equally ambiguous, but users wanted to prefer matches where the synonym is also the entity's preferred name.
+
+**Examples**:
+- **Doxorubicin case**: "Doxorubicin" appears in both `CHEBI:28748` (preferred name: "Doxorubicin") and `CHEBI:64816` (preferred name: "doxorubicin(1+)"). Enhanced logic prefers the first match since "Doxorubicin" is its preferred name.
+- **FSH case**: "FSH" appears in multiple entities that all have "FSH" as preferred name, so it remains ambiguous.
+
+**Key Changes**:
+
+### Enhanced Algorithm
+- When multiple entities share an exact synonym, check if exactly one has that synonym as its preferred name (case-insensitive)
+- If yes, prefer that entity (NOT ambiguous)
+- If zero or multiple entities have the synonym as preferred name, remain ambiguous
+
+### Code Changes
+- **phase1.py**: Enhanced `check_ambiguous_matches()` method with preferred name logic
+- **New helper logic**: Case-insensitive comparison of synonym with entity's preferred label
+- **Refined return behavior**: Now filters lookup_data to preferred match when applicable
+
+### Comprehensive Test Suite  
+- Added 5 new test cases covering all scenarios:
+  - Single preferred match (resolves ambiguity)
+  - Multiple preferred matches (remains ambiguous) 
+  - No preferred matches (remains ambiguous)
+  - Case-insensitive matching
+  - Single match behavior unchanged
+- Updated existing tests to match new enhanced behavior
+
+### Documentation Updates
+- Updated algorithm description with enhanced logic details
+- Added comprehensive examples of different scenarios
+- Updated test count and descriptions
+
+**Result**: More intelligent ambiguity resolution that prefers entities where the synonym is the canonical/preferred name, reducing false positives while maintaining accuracy.
+
+## API Refinements and Integration Testing (September 3, 2025)
+
+**Issue**: User requested API cleanup to use consistent POST methods, but this broke the lookup API which expects GET with query parameters.
+
+**API Method Summary**:
+- `get_normalized_nodes()`: POST with JSON payload ✓
+- `get_synonyms()`: POST with JSON payload ✓  
+- `lookup_names()`: GET with query parameters (had to revert from POST)
+  - Initial attempt to use POST with JSON caused 422 Client Error: Unprocessable Entity
+  - The lookup endpoint requires URL query parameters, not JSON body
+
+**Integration Testing Added**:
+- Created `test_integration.py` with real API calls (not mocked like unit tests)
+- Tests caught the API method incompatibility that mocked tests missed
+- Added comprehensive edge case testing for all three APIs
+- Integration tests would have caught the POST/GET issue immediately
+
+**Key Learning**: Unit tests with mocks validate logic but miss API compatibility issues. Integration tests are essential for API-dependent code.
+
+## Performance Analysis and Timing (September 3, 2025)
+
+**Batch Size Optimization**:
+- Reduced synonyms API batch size from 10,000 to 500 to avoid 500 server errors
+- Node normalization API handles 10,000 batch size fine
+- Lookup API processes individual queries (no batching available)
+
+**Performance Results (100 edges)**:
+- Processing rate: **1.3 edges/second**
+- Total time: 76.80 seconds
+- **Bottleneck**: Edge processing (74.55s, 97% of total time) due to individual lookup API calls per synonym
+- Setup time: Fast (2.25s for data loading + normalization + synonym retrieval)
+
+**Timing Breakdown**:
+- Data loading: 0.98s
+- Entity normalization: 0.56s  
+- Synonym retrieval: 0.71s
+- **Edge processing: 74.55s** (individual lookup calls are the bottleneck)
+
+**Full Dataset Estimation**:
+- Total edges: 2,354,366
+- **Estimated processing time: 487.5 hours (20.3 days)**
+- The individual lookup API calls for each synonym found in text are the main performance bottleneck
+
+**Current Status**: System is fully functional with enhanced preferred name logic, proper API usage, comprehensive testing, and detailed performance analysis. Ready for production use, though full dataset processing will take ~20 days due to API rate limitations.
+
+

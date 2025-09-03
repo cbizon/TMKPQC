@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}TMKP Edge Reviewer{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .edge-content {
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+        .edge-metadata {
+            font-size: 0.9em;
+            color: #6c757d;
+        }
+        .sentence-text {
+            line-height: 1.6;
+            margin: 15px 0;
+        }
+        .classification-badge {
+            font-size: 0.9em;
+        }
+        .nav-buttons {
+            position: sticky;
+            top: 20px;
+            background: white;
+            padding: 15px 0;
+            border-bottom: 1px solid #dee2e6;
+            margin-bottom: 20px;
+        }
+        .curie-link {
+            font-family: monospace;
+            background-color: #e9ecef;
+            padding: 2px 5px;
+            border-radius: 3px;
+            text-decoration: none;
+        }
+        .curie-link:hover {
+            background-color: #dee2e6;
+        }
+        .predicate {
+            font-weight: bold;
+            color: #0d6efd;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container">
+            <a class="navbar-brand" href="{{ url_for('index') }}">TMKP Edge Reviewer</a>
+            <div class="navbar-nav">
+                <a class="nav-link" href="{{ url_for('view_edges', classification='good') }}">
+                    Good Edges
+                </a>
+                <a class="nav-link" href="{{ url_for('view_edges', classification='bad') }}">
+                    Bad Edges
+                </a>
+                <a class="nav-link" href="{{ url_for('view_edges', classification='ambiguous') }}">
+                    Ambiguous Edges
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        {% block content %}{% endblock %}
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>
