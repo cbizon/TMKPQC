@@ -9,6 +9,7 @@ from api_functions import (
     get_normalized_nodes, 
     get_synonyms, 
     lookup_names,
+    bulk_lookup_names,
     batch_get_normalized_nodes,
     batch_get_synonyms,
     APIException
@@ -97,11 +98,105 @@ class TestAPIIntegration:
         result = lookup_names("", limit=1)
         assert isinstance(result, list)
         assert len(result) == 0
+        
+        # Empty strings list should return empty dict
+        result = bulk_lookup_names([])
+        assert isinstance(result, dict)
+        assert len(result) == 0
+        
+    def test_bulk_lookup_names_basic(self):
+        """Test basic bulk lookup with real API."""
+        strings = ["doxorubicin", "insulin", "water"]
+        result = bulk_lookup_names(strings, limit=3)
+        
+        assert isinstance(result, dict)
+        # Should have entries for all input strings
+        for string in strings:
+            assert string in result
+            assert isinstance(result[string], list)
+            # Each string should have at least one result (assuming they're common terms)
+            if result[string]:  # If there are results
+                first_result = result[string][0]
+                assert "curie" in first_result
+                assert "label" in first_result
+                
+    def test_bulk_lookup_vs_individual_comparison(self):
+        """Compare results between bulk lookup and individual lookups."""
+        test_strings = ["aspirin", "caffeine"]
+        
+        # Get results via bulk lookup
+        bulk_results = bulk_lookup_names(test_strings, limit=5)
+        
+        # Get results via individual lookups
+        individual_results = {}
+        for string in test_strings:
+            individual_results[string] = lookup_names(string, limit=5)
+        
+        # Compare results - they should be equivalent
+        for string in test_strings:
+            bulk_list = bulk_results.get(string, [])
+            individual_list = individual_results.get(string, [])
+            
+            # Should have same number of results
+            assert len(bulk_list) == len(individual_list)
+            
+            # If there are results, check that CURIEs match
+            if bulk_list and individual_list:
+                bulk_curies = {result.get("curie") for result in bulk_list}
+                individual_curies = {result.get("curie") for result in individual_list}
+                assert bulk_curies == individual_curies
+                
+    def test_bulk_lookup_with_filters(self):
+        """Test bulk lookup with biolink type filter."""
+        strings = ["insulin", "water"]
+        result = bulk_lookup_names(strings, biolink_types=["SmallMolecule"], limit=3)
+        
+        assert isinstance(result, dict)
+        for string in strings:
+            if string in result and result[string]:
+                # Check that results have the expected type (if available)
+                first_result = result[string][0]
+                assert "curie" in first_result
 
 
 @pytest.mark.slow
 class TestAPIIntegrationSlow:
     """Slower integration tests that test larger batches."""
+    
+    def test_bulk_lookup_performance_vs_individual(self):
+        """Test performance difference between bulk and individual lookups."""
+        import time
+        
+        test_strings = ["doxorubicin", "insulin", "aspirin", "caffeine", "water", 
+                       "glucose", "sodium", "alcohol", "nicotine", "morphine"]
+        
+        # Time individual lookups
+        start_time = time.time()
+        individual_results = {}
+        for string in test_strings:
+            individual_results[string] = lookup_names(string, limit=5)
+        individual_time = time.time() - start_time
+        
+        # Time bulk lookup
+        start_time = time.time()
+        bulk_results = bulk_lookup_names(test_strings, limit=5)
+        bulk_time = time.time() - start_time
+        
+        print(f"\nPerformance comparison for {len(test_strings)} lookups:")
+        print(f"Individual lookups: {individual_time:.3f} seconds")
+        print(f"Bulk lookup: {bulk_time:.3f} seconds")
+        print(f"Speed improvement: {individual_time/bulk_time:.2f}x faster")
+        
+        # Bulk should be significantly faster
+        assert bulk_time < individual_time
+        # Should be at least 2x faster (conservative estimate)
+        assert individual_time / bulk_time >= 2.0
+        
+        # Verify results are equivalent
+        for string in test_strings:
+            bulk_list = bulk_results.get(string, [])
+            individual_list = individual_results.get(string, [])
+            assert len(bulk_list) == len(individual_list)
     
     def test_medium_batch_synonyms(self):
         """Test synonyms API with medium batch size to check for server errors."""

@@ -20,7 +20,8 @@ from collections import defaultdict
 from api_functions import (
     batch_get_normalized_nodes, 
     batch_get_synonyms, 
-    lookup_names, 
+    lookup_names,
+    bulk_lookup_names,
     get_exact_matches,
     APIException
 )
@@ -372,9 +373,265 @@ class EdgeClassifier:
         with open(output_file, 'a') as f:
             f.write(json.dumps(result_edge) + '\n')
     
+    def collect_all_synonyms_from_batch(self, edges: List[Dict[str, Any]]) -> Dict[str, Set[str]]:
+        """
+        Collect all unique synonyms from a batch of edges, grouped by biolink type.
+        
+        Args:
+            edges: List of edges to process
+            
+        Returns:
+            Dictionary mapping biolink types to sets of unique synonyms
+        """
+        synonym_groups = defaultdict(set)
+        
+        for edge in edges:
+            # Get edge text
+            edge_text = edge.get('sentences', '')
+            if not edge_text or edge_text == 'NA':
+                continue
+                
+            # Extract synonyms from text (same logic as find_synonyms_in_text)
+            synonyms = set()
+            for curie in [edge.get('subject'), edge.get('object')]:
+                if curie and curie in self.synonyms_data:
+                    synonym_list = self.synonyms_data[curie]
+                    if synonym_list:
+                        synonyms.update(synonym_list)
+            
+            # Find synonyms in text and group by biolink type
+            for synonym in synonyms:
+                if self.find_synonyms_in_text(edge_text, [synonym]):
+                    # For now, we'll use a default group since we don't have biolink types
+                    # TODO: Enhance this to actually group by biolink type when available
+                    synonym_groups['default'].add(synonym)
+        
+        return synonym_groups
+    
+    def execute_bulk_lookups(self, synonym_groups: Dict[str, Set[str]]) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Execute bulk lookups for grouped synonyms and return cached results.
+        
+        Args:
+            synonym_groups: Dictionary mapping biolink types to synonym sets
+            
+        Returns:
+            Dictionary mapping synonyms to their lookup results
+        """
+        lookup_cache = {}
+        
+        for group_type, synonyms in synonym_groups.items():
+            if not synonyms:
+                continue
+                
+            synonym_list = list(synonyms)
+            print(f"Executing bulk lookup for {len(synonym_list)} {group_type} synonyms")
+            
+            try:
+                # Execute bulk lookup
+                bulk_results = bulk_lookup_names(synonym_list, limit=10)
+                
+                # Store results in cache
+                for synonym, results in bulk_results.items():
+                    lookup_cache[synonym] = results
+                    
+            except APIException as e:
+                print(f"Warning: Bulk lookup failed for {group_type} group: {e}")
+                # Fallback to individual lookups for this group
+                for synonym in synonyms:
+                    try:
+                        lookup_cache[synonym] = lookup_names(synonym, limit=10)
+                    except APIException:
+                        print(f"Warning: Could not lookup synonym '{synonym}'")
+                        lookup_cache[synonym] = []
+        
+        return lookup_cache
+    
+    def process_batch_with_cache(self, edges: List[Dict[str, Any]], 
+                                lookup_cache: Dict[str, List[Dict[str, Any]]]) -> Dict[str, int]:
+        """
+        Process a batch of edges using cached lookup results.
+        
+        Args:
+            edges: List of edges to process
+            lookup_cache: Cached lookup results for synonyms
+            
+        Returns:
+            Dictionary with classification counts for this batch
+        """
+        classification_counts = defaultdict(int)
+        
+        for edge in edges:
+            classification, debug_info = self.classify_edge_with_cache(edge, lookup_cache)
+            classification_counts[classification] += 1
+            self.write_edge_result(edge, classification, debug_info)
+        
+        return dict(classification_counts)
+    
+    def classify_edge_with_cache(self, edge: Dict[str, Any], 
+                                lookup_cache: Dict[str, List[Dict[str, Any]]]) -> Tuple[str, Dict[str, Any]]:
+        """
+        Classify an edge using cached lookup results instead of making API calls.
+        
+        Args:
+            edge: Edge to classify
+            lookup_cache: Cached lookup results
+            
+        Returns:
+            Tuple of (classification, debug_info)
+        """
+        # This is similar to classify_edge but uses lookup_cache instead of calling lookup_names
+        debug_info = {
+            'subject_curie': edge.get('subject'),
+            'object_curie': edge.get('object'),
+            'edge_text': edge.get('sentences', 'NA')
+        }
+        
+        # Check if we have sentences
+        if not edge.get('sentences') or edge.get('sentences') == 'NA':
+            debug_info['reason'] = 'No supporting text available'
+            return 'bad', debug_info
+            
+        # Get entity synonyms
+        subject_synonyms = self.synonyms_data.get(edge.get('subject'), [])
+        object_synonyms = self.synonyms_data.get(edge.get('object'), [])
+        
+        if not subject_synonyms or not object_synonyms:
+            debug_info['reason'] = 'Missing synonyms for subject or object'
+            return 'bad', debug_info
+        
+        # Check subject and object using cached lookups
+        subject_found = self._check_entity_in_text_with_cache(
+            edge.get('sentences'), subject_synonyms, lookup_cache, debug_info, 'subject')
+        object_found = self._check_entity_in_text_with_cache(
+            edge.get('sentences'), object_synonyms, lookup_cache, debug_info, 'object')
+        
+        # Classification logic
+        if subject_found and object_found:
+            return 'good', debug_info
+        elif not subject_found and not object_found:
+            debug_info['reason'] = 'Neither subject nor object found in text'
+            return 'bad', debug_info
+        else:
+            if not subject_found:
+                debug_info['reason'] = 'Subject not found in text'
+            else:
+                debug_info['reason'] = 'Object not found in text'
+            return 'bad', debug_info
+    
+    def _check_entity_in_text_with_cache(self, text: str, synonyms: List[str], 
+                                        lookup_cache: Dict[str, List[Dict[str, Any]]], 
+                                        debug_info: Dict[str, Any], entity_type: str) -> bool:
+        """
+        Check if an entity is found in text using cached lookup results.
+        """
+        found_synonyms = self.find_synonyms_in_text(text, synonyms)
+        if not found_synonyms:
+            return False
+        
+        # Use the enhanced ambiguity logic with cached results
+        is_ambiguous, filtered_lookup_data = self.check_ambiguous_matches_with_cache(found_synonyms, lookup_cache)
+        
+        # Store debug information
+        debug_info[f'{entity_type}_synonyms_found'] = found_synonyms
+        debug_info[f'{entity_type}_ambiguous'] = is_ambiguous
+        
+        return not is_ambiguous
+    
+    def check_ambiguous_matches_with_cache(self, synonyms: List[str], 
+                                          lookup_cache: Dict[str, List[Dict[str, Any]]]) -> Tuple[bool, Dict[str, List[Dict[str, Any]]]]:
+        """
+        Enhanced ambiguity checking using cached lookup results with preferred name logic.
+        
+        Args:
+            synonyms: List of synonyms found in text
+            lookup_cache: Cached lookup results
+            
+        Returns:
+            Tuple of (is_ambiguous, filtered_lookup_data)
+        """
+        lookup_data = {}
+        is_ambiguous = False
+        
+        for synonym in synonyms:
+            # Get cached lookup results
+            lookup_results = lookup_cache.get(synonym, [])
+            if not lookup_results:
+                continue
+                
+            # Get exact matches
+            exact_matches = get_exact_matches(lookup_results)
+            lookup_data[synonym] = exact_matches
+            
+            # Enhanced ambiguity logic: prefer matches where synonym is preferred name
+            if len(exact_matches) > 1:
+                # Check if exactly one match has this synonym as preferred name
+                preferred_matches = []
+                for match in exact_matches:
+                    # Check if the synonym matches the preferred label (case-insensitive)
+                    preferred_label = match.get('label', '').lower()
+                    if synonym.lower() == preferred_label:
+                        preferred_matches.append(match)
+                
+                # If exactly one match has the synonym as preferred name, it's not ambiguous
+                if len(preferred_matches) == 1:
+                    # Keep only the preferred match in lookup data
+                    lookup_data[synonym] = preferred_matches
+                else:
+                    # Still ambiguous - either 0 or multiple preferred matches
+                    is_ambiguous = True
+        
+        return is_ambiguous, lookup_data
+    
+    def process_all_edges_batched(self, batch_size: int = 1000) -> Dict[str, int]:
+        """
+        Process all edges using outer batching approach with bulk lookups.
+        
+        Args:
+            batch_size: Number of edges to process in each batch
+            
+        Returns:
+            Dictionary with classification counts
+        """
+        print(f"Processing edges in batches of {batch_size}...")
+        total_classification_counts = defaultdict(int)
+        total_edges = len(self.edges)
+        
+        for i in range(0, total_edges, batch_size):
+            batch_end = min(i + batch_size, total_edges)
+            batch = self.edges[i:batch_end]
+            batch_num = i // batch_size + 1
+            total_batches = (total_edges + batch_size - 1) // batch_size
+            
+            print(f"Processing batch {batch_num}/{total_batches} ({len(batch)} edges)")
+            
+            # Step 1: Collect all synonyms from this batch
+            start_time = time.time()
+            synonym_groups = self.collect_all_synonyms_from_batch(batch)
+            collect_time = time.time() - start_time
+            
+            # Step 2: Execute bulk lookups for all synonym groups
+            start_time = time.time()
+            lookup_cache = self.execute_bulk_lookups(synonym_groups)
+            lookup_time = time.time() - start_time
+            
+            # Step 3: Process all edges in batch with cached results
+            start_time = time.time()
+            batch_counts = self.process_batch_with_cache(batch, lookup_cache)
+            process_time = time.time() - start_time
+            
+            # Update total counts
+            for classification, count in batch_counts.items():
+                total_classification_counts[classification] += count
+            
+            print(f"  Batch {batch_num} completed: collect={collect_time:.2f}s, lookup={lookup_time:.2f}s, process={process_time:.2f}s")
+        
+        print(f"Completed processing {total_edges} edges")
+        return dict(total_classification_counts)
+
     def process_all_edges(self) -> Dict[str, int]:
         """
-        Process all edges and classify them.
+        Process all edges and classify them (legacy method for compatibility).
         
         Returns:
             Dictionary with classification counts
@@ -426,9 +683,9 @@ class EdgeClassifier:
         synonyms_time = time.time() - start_time
         print(f"Synonym retrieval completed in {synonyms_time:.2f} seconds")
         
-        # Process all edges
+        # Process all edges using batched approach
         start_time = time.time()
-        results = self.process_all_edges()
+        results = self.process_all_edges_batched()
         processing_time = time.time() - start_time
         total_time = time.time() - overall_start_time
         

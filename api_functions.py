@@ -218,6 +218,69 @@ def batch_get_synonyms(preferred_curies: List[str], batch_size: int = 500) -> Di
     return results
 
 
+def bulk_lookup_names(strings: List[str], 
+                     autocomplete: bool = False,
+                     highlighting: bool = False,
+                     offset: int = 0,
+                     limit: int = 10,
+                     biolink_types: Optional[List[str]] = None,
+                     only_prefixes: Optional[str] = None,
+                     exclude_prefixes: Optional[str] = None,
+                     only_taxa: Optional[str] = None) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Look up multiple entities by name using the bulk lookup API.
+    
+    Args:
+        strings: List of search terms
+        autocomplete: Enable autocomplete/partial matching (default: False)
+        highlighting: Enable search term highlighting (default: False)
+        offset: Number of results to skip for pagination (default: 0)
+        limit: Maximum number of results per string (default: 10)
+        biolink_types: Filter by Biolink entity types (e.g., ['SmallMolecule', 'Gene'])
+        only_prefixes: Only include results from these namespaces (comma-separated)
+        exclude_prefixes: Exclude results from these namespaces (comma-separated)
+        only_taxa: Only include results from these taxa (comma-separated, e.g., 'NCBITaxon:9606')
+    
+    Returns:
+        Dictionary mapping each input string to its list of matching entities
+        
+    Raises:
+        APIException: If the API request fails
+    """
+    url = "https://name-resolution-sri-dev.apps.renci.org/bulk-lookup"
+    
+    payload = {
+        "strings": strings,
+        "autocomplete": autocomplete,
+        "highlighting": highlighting,
+        "offset": offset,
+        "limit": limit
+    }
+    
+    if biolink_types:
+        payload["biolink_types"] = biolink_types
+    if only_prefixes:
+        payload["only_prefixes"] = only_prefixes
+    if exclude_prefixes:
+        payload["exclude_prefixes"] = exclude_prefixes
+    if only_taxa:
+        payload["only_taxa"] = only_taxa
+    
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+    
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        raise APIException(f"Name resolver bulk lookup API request failed: {e}")
+    except json.JSONDecodeError as e:
+        raise APIException(f"Failed to parse bulk lookup API response: {e}")
+
+
 def get_exact_matches(lookup_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Filter lookup results to get only exact matches (highest scoring results).
