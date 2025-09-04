@@ -10,6 +10,7 @@ This module handles the first phase of QC which focuses on entity identification
 """
 
 import json
+import os
 import re
 import time
 from typing import Dict, List, Set, Tuple, Any
@@ -736,6 +737,238 @@ class EdgeClassifier:
         print(f"Good edges: {self.good_edges_file}")
         print(f"Bad edges: {self.bad_edges_file}")
         print(f"Ambiguous edges: {self.ambiguous_edges_file}")
+    
+    def run_streaming(self, batch_size: int = 1000, max_edges: int = None) -> None:
+        """
+        Run Phase 1 classification using streaming processing.
+        Processes edges in chunks without loading the entire dataset into memory.
+        
+        Args:
+            batch_size: Number of edges to process in each streaming batch
+            max_edges: Maximum number of edges to process (for testing)
+        """
+        overall_start_time = time.time()
+        print("Starting Phase 1 edge classification (streaming mode)...")
+        
+        # Only load nodes into memory (much smaller - ~400MB vs ~2GB)
+        start_time = time.time()
+        print("Loading nodes...")
+        nodes = {}
+        with open(self.nodes_file, 'r') as f:
+            for line in f:
+                node = json.loads(line.strip())
+                nodes[node['id']] = node
+        print(f"Loaded {len(nodes)} nodes")
+        load_time = time.time() - start_time
+        print(f"Node loading completed in {load_time:.2f} seconds")
+        
+        # Get all unique entities by streaming through edges once
+        start_time = time.time()
+        print("Collecting unique entities by streaming through edges...")
+        entities = set()
+        total_edges_count = 0
+        
+        with open(self.edges_file, 'r') as f:
+            for i, line in enumerate(f):
+                if max_edges and i >= max_edges:
+                    break
+                edge = json.loads(line.strip())
+                entities.add(edge['subject'])
+                entities.add(edge['object'])
+                total_edges_count += 1
+        
+        entities = list(entities)
+        collect_time = time.time() - start_time
+        print(f"Found {len(entities)} unique entities from {total_edges_count} edges")
+        print(f"Entity collection completed in {collect_time:.2f} seconds")
+        
+        # Normalize entities and get synonyms
+        start_time = time.time()
+        print("Normalizing entities...")
+        normalized_data = batch_get_normalized_nodes(entities)
+        normalize_time = time.time() - start_time
+        print(f"Entity normalization completed in {normalize_time:.2f} seconds")
+        
+        start_time = time.time()
+        print("Getting synonyms...")
+        preferred_entities = [data['id']['identifier'] for data in normalized_data.values() if data]
+        synonyms_data = batch_get_synonyms(preferred_entities)
+        synonyms_time = time.time() - start_time
+        print(f"Synonym retrieval completed in {synonyms_time:.2f} seconds")
+        
+        # Stream process edges in batches
+        start_time = time.time()
+        print(f"Processing edges in streaming batches of {batch_size}...")
+        
+        # Initialize classification counts and output files
+        classification_counts = defaultdict(int)
+        output_files = self._create_output_files()
+        
+        processed_edges = 0
+        batch_num = 0
+        
+        with open(self.edges_file, 'r') as f:
+            batch_edges = []
+            
+            for i, line in enumerate(f):
+                if max_edges and i >= max_edges:
+                    break
+                    
+                edge = json.loads(line.strip())
+                edge['edge_id'] = str(uuid.uuid4())
+                batch_edges.append(edge)
+                
+                # Process batch when full
+                if len(batch_edges) >= batch_size:
+                    batch_num += 1
+                    batch_start_time = time.time()
+                    
+                    # Process this batch using the batched lookup approach
+                    batch_results = self._process_streaming_batch(
+                        batch_edges, nodes, normalized_data, synonyms_data
+                    )
+                    
+                    # Update counts and write results
+                    for classification in batch_results:
+                        classification_counts[classification] += batch_results[classification]
+                    
+                    processed_edges += len(batch_edges)
+                    batch_time = time.time() - batch_start_time
+                    
+                    print(f"  Batch {batch_num}: processed {len(batch_edges)} edges in {batch_time:.3f}s "
+                          f"({len(batch_edges)/batch_time:.1f} edges/sec) - "
+                          f"Total: {processed_edges}/{total_edges_count}")
+                    
+                    # Clear batch to free memory
+                    batch_edges = []
+            
+            # Process final partial batch
+            if batch_edges:
+                batch_num += 1
+                batch_start_time = time.time()
+                
+                batch_results = self._process_streaming_batch(
+                    batch_edges, nodes, normalized_data, synonyms_data
+                )
+                
+                for classification in batch_results:
+                    classification_counts[classification] += batch_results[classification]
+                
+                processed_edges += len(batch_edges)
+                batch_time = time.time() - batch_start_time
+                
+                print(f"  Batch {batch_num} (final): processed {len(batch_edges)} edges in {batch_time:.3f}s "
+                      f"({len(batch_edges)/batch_time:.1f} edges/sec) - "
+                      f"Total: {processed_edges}/{total_edges_count}")
+        
+        # Close output files
+        for f in output_files.values():
+            f.close()
+        
+        processing_time = time.time() - start_time
+        total_time = time.time() - overall_start_time
+        
+        print(f"Edge processing completed in {processing_time:.2f} seconds")
+        print(f"Total runtime: {total_time:.2f} seconds")
+        
+        # Performance metrics
+        edges_per_second = processed_edges / processing_time if processing_time > 0 else 0
+        print(f"Processing rate: {edges_per_second:.1f} edges/second")
+        
+        # Print summary
+        print("\nClassification Summary:")
+        for classification, count in sorted(classification_counts.items()):
+            print(f"{classification.capitalize()} edges: {count}")
+        print(f"Total: {sum(classification_counts.values())}")
+        
+        print(f"\nTiming Breakdown:")
+        print(f"  Node loading: {load_time:.2f}s")
+        print(f"  Entity collection: {collect_time:.2f}s")
+        print(f"  Entity normalization: {normalize_time:.2f}s")
+        print(f"  Synonym retrieval: {synonyms_time:.2f}s")
+        print(f"  Edge processing: {processing_time:.2f}s")
+        print(f"  Total: {total_time:.2f}s")
+        
+        print(f"\nOutput files created:")
+        for classification in ['good', 'bad', 'ambiguous']:
+            file_path = Path(self.output_dir) / f"{classification}_edges.jsonl"
+            print(f"{classification.capitalize()} edges: {file_path}")
+    
+    def _process_streaming_batch(self, batch_edges: List[Dict[str, Any]], nodes: Dict[str, Any], 
+                                normalized_data: Dict[str, Any], synonyms_data: Dict[str, Any]) -> Dict[str, int]:
+        """
+        Process a batch of edges using the same batched lookup approach.
+        
+        Args:
+            batch_edges: List of edges to process
+            nodes: Node data dictionary
+            normalized_data: Normalized entity data
+            synonyms_data: Synonym data
+            
+        Returns:
+            Dictionary with classification counts for this batch
+        """
+        # Use existing batched processing logic
+        # 1. Collect synonyms from this batch
+        synonym_groups = self._collect_synonyms_from_batch(batch_edges, normalized_data, synonyms_data)
+        
+        # 2. Execute bulk lookups
+        lookup_cache = self._execute_bulk_lookups(synonym_groups)
+        
+        # 3. Process batch with cache and write results
+        classification_counts = defaultdict(int)
+        
+        for edge in batch_edges:
+            # Add entity names
+            edge['subject_name'] = nodes.get(edge['subject'], {}).get('name', 'Unknown')
+            edge['object_name'] = nodes.get(edge['object'], {}).get('name', 'Unknown')
+            
+            # Classify edge
+            classification, debug_info = self.classify_edge_with_cache(edge, lookup_cache)
+            classification_counts[classification] += 1
+            
+            # Write result immediately
+            self.write_edge_result(edge, classification, debug_info)
+        
+        return dict(classification_counts)
+    
+    def _collect_synonyms_from_batch(self, batch_edges: List[Dict[str, Any]], 
+                                   normalized_data: Dict[str, Any], synonyms_data: Dict[str, Any]) -> Dict[str, Set[str]]:
+        """
+        Collect all unique synonyms from a batch, grouped by biolink type (reusing existing logic).
+        """
+        # Temporarily set edges for existing method to work
+        original_edges = self.edges if hasattr(self, 'edges') else []
+        original_normalized = self.normalized_data if hasattr(self, 'normalized_data') else {}
+        original_synonyms = self.synonyms_data if hasattr(self, 'synonyms_data') else {}
+        
+        self.edges = batch_edges
+        self.normalized_data = normalized_data
+        self.synonyms_data = synonyms_data
+        
+        try:
+            result = self.collect_all_synonyms_from_batch(batch_edges)
+            return result
+        finally:
+            # Restore original data
+            self.edges = original_edges
+            self.normalized_data = original_normalized
+            self.synonyms_data = original_synonyms
+    
+    def _execute_bulk_lookups(self, synonym_groups: Dict[str, Set[str]]) -> Dict[str, List[Dict[str, Any]]]:
+        """Execute bulk lookups (reusing existing logic)."""
+        return self.execute_bulk_lookups(synonym_groups)
+    
+    def _create_output_files(self) -> Dict[str, Any]:
+        """Create and return output file handles."""
+        os.makedirs(self.output_dir, exist_ok=True)
+        
+        output_files = {}
+        for classification in ['good', 'bad', 'ambiguous']:
+            file_path = Path(self.output_dir) / f"{classification}_edges.jsonl"
+            output_files[classification] = open(file_path, 'w')
+        
+        return output_files
 
 
 def main():
