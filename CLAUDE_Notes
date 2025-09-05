@@ -17,9 +17,32 @@ The text mining agent that has extracted this edge from these papers frequently 
 
 To address these issues we are going to try to take a two pronged approach.  We could ask an LLM to review each edge, and that works ok, but it is slow and we want to limit quite how much work we are asking the LLM to do.  So we are going to take a multiphase approach.
 
-In the first phase we are going to examine whether the subject and object are the things mentioned in the text, whether they have been misidentified, or whether we cannot tell.
+In the first phase we are going to examine whether the subject and object entities that were already chosen to match text in the edge are good, unambiguous matches - i.e., whether we can trust that the prior text mining did the entity identification correctly.
 
-Our main tools in this are going to be two APIs.  One is nodenormalizer found here: https://nodenormalization-sri.renci.org/docs#/. We are only interested in the get_normalized_nodes function, and especially in its POST implementation, which is much more efficient.  This function takes one CURIE and returns every other CURIE that it knows about for the same concept.  Here is an example payload:
+## Core Validation Logic (4 Steps)
+
+**THIS LOGIC IS FIXED - IF YOU CHANGE IT YOU WILL BE FIRED**
+
+**The Goal:** Validate whether the entity that was already chosen to match text in an edge is a good, unambiguous match.
+
+**The 4-Step Validation Process:**
+
+1. **Get canonical identifier**: Use node normalization to get the best/preferred identifier for the entity (e.g., subject)
+
+2. **Get all synonyms**: Use the synonyms API to get all lexical synonyms for that canonical entity. One of these synonyms should be what was actually matched in the original text. If we can't find any synonym that appears in the text, then this is a bad edge.
+
+3. **Reverse lookup**: Take the synonym string that we found in the text (from step 2) and send it to the lookup/bulk-lookup API to see what entities it could resolve to.
+
+4. **Evaluate ambiguity**: 
+   - If lookup returns only the original subject entity → **good edge** (unambiguous)
+   - If lookup returns multiple entities → check if we can disambiguate using preferred names and other criteria
+   - If we can't disambiguate → **ambiguous edge** (because the text-to-entity mapping is not reliable)
+
+This approach validates existing entity mappings rather than trying to find new entities in text.
+
+## APIs Used
+
+Our main tools in this are going to be two APIs.  One is nodenormalizer found here: https://nodenormalization-dev.apps.renci.org/docs#/. We are only interested in the get_normalized_nodes function, and especially in its POST implementation, which is much more efficient.  This function takes one CURIE and returns every other CURIE that it knows about for the same concept.  Here is an example payload:
 {
   "curies": [
     "MESH:D014867",
@@ -172,9 +195,10 @@ The result of this query will look like:
 
 Notice that each entity returns a list of other identifiers.  Note also that types are returned. These are ordered, and we are always interested in the first element in the list, which should be the most specific. Note also that each input has an id element - this contains the preferred identifier for the clique of identifiers.
 
-The other tool of interest is name resolver found here:  https://name-resolution-sri-dev.apps.renci.org/docs#.  This API has 2 functions of interest:  
+The other tool of interest is name resolver found here:  https://name-resolution-sri-dev.apps.renci.org/docs#.  This API has 3 functions of interest:  
 1) lookup: Take a string and return possible curies that match
-2) synonyms: Take a curie (which must be the preferred id from nodenorm) and return all known lexical synonyms for that curie.
+2) bulk-lookup: Take multiple strings and return possible curies for each (more efficient)
+3) synonyms: Take a curie (which must be the preferred id from nodenorm) and return all known lexical synonyms for that curie.
 
 Synonyms Input:
 {
@@ -489,15 +513,17 @@ The implemented code structure is as follows:
 - `batch_get_normalized_nodes()` and `batch_get_synonyms()`: Batch processing wrappers
 - `get_exact_matches()`: Helper to filter lookup results (deprecated - replaced with exact synonym matching)
 
-**phase1.py**: Implements the Phase 1 entity identification logic
+**phase1.py**: Implements the Phase 1 entity validation logic following the 4-step process
 - `EdgeClassifier` class with the following key methods:
   - `load_data()`: Loads edges and nodes from JSONL files
-  - `collect_entities()`: Collects unique subject/object entities
-  - `get_normalized_data()`: Batch calls to normalize entities and get synonyms
-  - `find_synonyms_in_text()`: Finds entity synonyms in supporting text using word boundaries
-  - `check_ambiguous_matches()`: **Enhanced logic** - checks if synonyms map to multiple distinct entities using exact string matching with preferred name preference. For genes, filters by human taxon (NCBITaxon:9606)
-  - `classify_edge()`: Main classification logic returning (classification, debug_info) tuple
-  - `process_all_edges()`: Processes all edges and writes results to output files
+  - `collect_entities()`: Collects unique subject/object entities from edges
+  - `normalize_entities()`: Gets canonical identifiers for all entities (Step 1)
+  - `get_all_synonyms()`: Gets all synonyms for normalized entities (Step 2)  
+  - `find_synonyms_in_text()`: Finds which entity synonyms appear in supporting text (Step 2)
+  - `check_ambiguous_matches()`: Performs reverse lookup of found synonyms and evaluates ambiguity (Steps 3-4)
+  - `classify_edge()`: Main classification logic implementing the 4-step validation process
+  - `run_streaming()`: Processes all edges in batches using bulk lookup for efficiency
+- **Current Status**: The existing code does NOT implement the correct 4-step validation logic described above. It needs to be rewritten to follow the validation approach.
 - Outputs: `good_edges.jsonl`, `bad_edges.jsonl`, `ambiguous_edges.jsonl` with embedded entity names and debug info
 
 **webapp.py**: Flask web application for reviewing classified edges
@@ -796,5 +822,29 @@ The implemented code structure is as follows:
 3. **Phase 3**: Extreme streaming batching (640+ edges/sec, memory efficient)
 
 **Result**: True "extreme streaming batching" - optimal performance AND memory efficiency. The system now scales to any dataset size while maintaining the 640x performance improvement from bulk API usage.
+
+## Critical Logic Gap Discovered (September 4, 2025)
+
+**Problem Identified**: During investigation of why 0 ambiguous edges were found out of 2.3M processed edges, we discovered a fundamental logic mismatch between the documented approach and the implemented code.
+
+**Expected Logic (4-Step Validation)**:
+1. **Get canonical identifier**: Use node normalization for the existing subject/object entities
+2. **Get synonyms**: Get all lexical synonyms for those canonical entities  
+3. **Find text match**: Determine which synonym appears in the supporting text
+4. **Reverse lookup**: Look up that synonym to see what entities it could resolve to
+5. **Evaluate ambiguity**: If multiple entities, check if mapping is ambiguous
+
+**Current Implementation Issue**:
+The code in `collect_all_synonyms_from_batch()` (phase1.py:377-411) only extracts synonyms that are **already associated with the subject/object entities**. It doesn't perform the reverse lookup validation described above.
+
+**Specific FSH Case**:
+- Subject: CHEBI:81569 (some chemical compound)  
+- Text contains: "FSH" (Follicle Stimulating Hormone)
+- Current code: Looks for synonyms of CHEBI:81569 that appear in text, doesn't find "FSH" 
+- Correct approach: Should check if "FSH" (found in text) could resolve to multiple entities
+
+**Root Cause**: The current `collect_all_synonyms_from_batch` method implements entity discovery logic (finding new entities in text) rather than entity validation logic (validating existing entity mappings).
+
+**Status**: The code needs to be rewritten to implement the correct 4-step validation approach. The current architecture with bulk lookup APIs and streaming is sound, but the core classification logic is fundamentally incorrect.
 
 

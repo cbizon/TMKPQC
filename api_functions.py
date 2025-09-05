@@ -7,12 +7,56 @@ import requests
 import json
 from typing import List, Dict, Any, Optional
 import time
+import random
 from urllib.parse import urlencode
 
 
 class APIException(Exception):
     """Custom exception for API-related errors."""
     pass
+
+
+def api_request_with_retry(func, *args, max_retries: int = 3, base_delay: float = 1.0, **kwargs):
+    """
+    Execute an API request with exponential backoff retry logic.
+    
+    Args:
+        func: The API function to call
+        *args: Arguments for the function
+        max_retries: Maximum number of retry attempts (default: 3)
+        base_delay: Base delay in seconds for exponential backoff (default: 1.0)
+        **kwargs: Keyword arguments for the function
+        
+    Returns:
+        Result of the successful API call
+        
+    Raises:
+        APIException: If all retry attempts fail
+    """
+    last_exception = None
+    
+    for attempt in range(max_retries + 1):
+        try:
+            return func(*args, **kwargs)
+        except APIException as e:
+            last_exception = e
+            
+            # Don't retry on the last attempt
+            if attempt == max_retries:
+                break
+                
+            # Check if this is a server error worth retrying (5xx errors)
+            if "502 Server Error" in str(e) or "503 Server Error" in str(e) or "500 Server Error" in str(e):
+                delay = base_delay * (2 ** attempt) + random.uniform(0, 1)  # Exponential backoff + jitter
+                print(f"API request failed (attempt {attempt + 1}/{max_retries + 1}): {e}")
+                print(f"Retrying in {delay:.2f} seconds...")
+                time.sleep(delay)
+            else:
+                # Don't retry on non-server errors (4xx, network issues, etc.)
+                raise e
+    
+    # All retries exhausted
+    raise last_exception
 
 
 def get_normalized_nodes(curies: List[str], 
@@ -36,7 +80,7 @@ def get_normalized_nodes(curies: List[str],
     Raises:
         APIException: If the API request fails
     """
-    url = "https://nodenormalization-sri.renci.org/get_normalized_nodes"
+    url = "https://nodenormalization-dev.apps.renci.org/get_normalized_nodes"
     
     payload = {
         "curies": curies,
@@ -74,7 +118,7 @@ def get_synonyms(preferred_curies: List[str]) -> Dict[str, Any]:
     Raises:
         APIException: If the API request fails
     """
-    url = "https://name-resolution-sri.renci.org/synonyms"
+    url = "https://name-resolution-sri-dev.apps.renci.org/synonyms"
     
     payload = {
         "preferred_curies": preferred_curies
@@ -124,7 +168,7 @@ def lookup_names(query: str,
     Raises:
         APIException: If the API request fails
     """
-    url = "https://name-resolution-sri.renci.org/lookup"
+    url = "https://name-resolution-sri-dev.apps.renci.org/lookup"
     
     params = {
         "string": query,
@@ -158,13 +202,13 @@ def lookup_names(query: str,
         raise APIException(f"Failed to parse lookup API response: {e}")
 
 
-def batch_get_normalized_nodes(all_curies: List[str], batch_size: int = 10000) -> Dict[str, Any]:
+def batch_get_normalized_nodes(all_curies: List[str], batch_size: int = 2000) -> Dict[str, Any]:
     """
     Process a large list of CURIEs in batches for node normalization.
     
     Args:
         all_curies: Complete list of CURIEs to normalize
-        batch_size: Size of each batch (default: 10000)
+        batch_size: Size of each batch (default: 2000)
     
     Returns:
         Combined dictionary of all normalized node information
@@ -178,7 +222,7 @@ def batch_get_normalized_nodes(all_curies: List[str], batch_size: int = 10000) -
         batch = all_curies[i:i + batch_size]
         print(f"Processing node normalization batch {i//batch_size + 1} of {(len(all_curies) + batch_size - 1)//batch_size} ({len(batch)} curies)")
         
-        batch_results = get_normalized_nodes(batch)
+        batch_results = api_request_with_retry(get_normalized_nodes, batch)
         results.update(batch_results)
         
         # Small delay between batches to be respectful to the API
@@ -208,7 +252,7 @@ def batch_get_synonyms(preferred_curies: List[str], batch_size: int = 500) -> Di
         batch = preferred_curies[i:i + batch_size]
         print(f"Processing synonyms batch {i//batch_size + 1} of {(len(preferred_curies) + batch_size - 1)//batch_size} ({len(batch)} curies)")
         
-        batch_results = get_synonyms(batch)
+        batch_results = api_request_with_retry(get_synonyms, batch)
         results.update(batch_results)
         
         # Small delay between batches to be respectful to the API
@@ -247,7 +291,7 @@ def bulk_lookup_names(strings: List[str],
     Raises:
         APIException: If the API request fails
     """
-    url = "https://name-resolution-sri.renci.org/bulk-lookup"
+    url = "https://name-resolution-sri-dev.apps.renci.org/bulk-lookup"
     
     payload = {
         "strings": strings,
@@ -278,19 +322,16 @@ def bulk_lookup_names(strings: List[str],
 
 def get_exact_matches(lookup_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Filter lookup results to get only exact matches (highest scoring results).
+    Return all lookup results without filtering by score.
+    
+    The previous implementation filtered by highest score, but this was eliminating
+    legitimate ambiguous matches where multiple entities had the same high score.
+    Now we return all results and let the ambiguity detection logic handle multiple matches.
     
     Args:
         lookup_results: Results from lookup_names function
     
     Returns:
-        List of exact matches
+        All lookup results (no longer filtering by score)
     """
-    if not lookup_results:
-        return []
-    
-    # Get the highest score
-    max_score = max(result.get("score", 0) for result in lookup_results)
-    
-    # Return all results with the maximum score (exact matches)
-    return [result for result in lookup_results if result.get("score", 0) == max_score]
+    return lookup_results if lookup_results else []
