@@ -1,22 +1,21 @@
+#!/usr/bin/env python3
 """
-Phase 1 implementation for TMKP edge quality control.
+Phase 1 Edge Classification - Standalone Functions Version
 
-This module handles the first phase of QC which focuses on entity identification:
-1. Load edges and collect all unique entities (subjects and objects)
-2. Normalize entities using node normalizer API
-3. Get synonyms for all preferred identifiers  
-4. For each edge, check if synonyms appear in the supporting text
-5. Classify edges as good, bad, or ambiguous based on entity identification
+This module contains functions for classifying edges based on entity identification
+and ambiguity detection using various APIs (Node Normalizer, Name Resolver, etc.).
 """
 
+import argparse
 import json
 import os
 import re
+import tempfile
 import time
-from typing import Dict, List, Set, Tuple, Any
-from pathlib import Path
 import uuid
-from collections import defaultdict
+from collections import defaultdict, Counter
+from pathlib import Path
+from typing import Any, Dict, List, Set, Tuple, Optional
 
 from api_functions import (
     batch_get_normalized_nodes, 
@@ -28,598 +27,684 @@ from api_functions import (
 )
 
 
-class EdgeClassifier:
-    """Main class for edge classification in Phase 1."""
+def find_synonyms_in_text(text: str, synonyms: List[str]) -> List[str]:
+    """
+    Find which synonyms appear in the given text.
     
-    def __init__(self, edges_file: str, nodes_file: str, output_dir: str = "output"):
-        self.edges_file = edges_file
-        self.nodes_file = nodes_file
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(exist_ok=True)
-        
-        # Data storage (only used by write_edge_result for entity names)
-        self.nodes = {}
-        
-        # Output files
-        self.good_edges_file = self.output_dir / "good_edges.jsonl"
-        self.bad_edges_file = self.output_dir / "bad_edges.jsonl" 
-        self.ambiguous_edges_file = self.output_dir / "ambiguous_edges.jsonl"
-        
-        # Clear existing output files
-        for output_file in [self.good_edges_file, self.bad_edges_file, self.ambiguous_edges_file]:
-            if output_file.exists():
-                output_file.unlink()
+    Args:
+        text: Text to search in
+        synonyms: List of possible synonyms
     
+    Returns:
+        List of synonyms found in text
+    """
+    if not text or not synonyms:
+        return []
     
-    def find_synonyms_in_text(self, text: str, synonyms: List[str]) -> List[str]:
-        """
-        Find which synonyms appear in the given text.
-        
-        Args:
-            text: Text to search in
-            synonyms: List of possible synonyms
-        
-        Returns:
-            List of synonyms found in text
-        """
-        if not text or not synonyms:
-            return []
-        
-        found_synonyms = []
-        text_lower = text.lower()
-        
-        for synonym in synonyms:
-            if not synonym:
-                continue
-            
-            synonym_lower = synonym.lower()
-            
-            # Look for exact word matches (not just substring matches)
-            # Use word boundaries to avoid partial matches
-            pattern = r'\b' + re.escape(synonym_lower) + r'\b'
-            if re.search(pattern, text_lower):
-                found_synonyms.append(synonym)
-        
-        return found_synonyms
+    found_synonyms = []
+    text_lower = text.lower()
     
-    def _format_lookup_result(self, result: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Format a lookup result for storage in debug info.
+    for synonym in synonyms:
+        if not synonym:
+            continue
         
-        Args:
-            result: Raw result from lookup_names API
-            
-        Returns:
-            Formatted result dictionary with limited fields
-        """
-        return {
-            'curie': result.get('curie', 'N/A'),
-            'label': result.get('label', 'N/A'),
-            'taxa': result.get('taxa', []),
-            'score': result.get('score', 0),
-            'synonyms': result.get('synonyms', [])[:10],  # Limit synonyms for storage
-            'types': [t.replace('biolink:', '') for t in result.get('types', [])][:3]  # Show top 3 types
-        }
-    
-    
-    
-    def write_edge_result(self, edge: Dict[str, Any], classification: str, debug_info: Dict[str, Any] = None) -> None:
-        """
-        Write edge result to appropriate output file.
+        synonym_lower = synonym.lower()
         
-        Args:
-            edge: Edge dictionary
-            classification: Classification result ('good', 'bad', 'ambiguous')
-            debug_info: Optional debug information including found synonyms
-        """
-        # Add classification to edge data
-        result_edge = edge.copy()
-        result_edge['qc_classification'] = classification
-        result_edge['qc_phase'] = 'phase1_entity_identification'
+        # Look for exact word matches (not just substring matches)
+        # Use word boundaries to avoid partial matches
+        pattern = r'\b' + re.escape(synonym_lower) + r'\b'
+        if re.search(pattern, text_lower):
+            found_synonyms.append(synonym)
+    
+    return found_synonyms
+
+
+def format_lookup_result(result: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Format a lookup result for storage in debug info.
+    
+    Args:
+        result: Raw result from lookup_names API
         
-        # Add entity names for webapp display
-        subject_node = self.nodes.get(edge['subject'])
-        object_node = self.nodes.get(edge['object'])
+    Returns:
+        Formatted result dictionary with limited fields
+    """
+    return {
+        'curie': result.get('curie', 'N/A'),
+        'label': result.get('label', 'N/A'),
+        'taxa': result.get('taxa', []),
+        'score': result.get('score', 0),
+        'synonyms': result.get('synonyms', [])[:10],  # Limit synonyms for storage
+        'types': [t.replace('biolink:', '') for t in result.get('types', [])][:3]  # Show top 3 types
+    }
+
+
+def write_edge_result(edge: Dict[str, Any], classification: str, output_files: Dict[str, Any],
+                     nodes: Dict[str, Any] = None, debug_info: Dict[str, Any] = None) -> None:
+    """
+    Write edge result to appropriate output file.
+    
+    Args:
+        edge: Edge dictionary
+        classification: Classification result ('good', 'bad', 'ambiguous')
+        output_files: Dictionary with output file handles
+        nodes: Node data for entity names
+        debug_info: Optional debug information including found synonyms
+    """
+    # Add classification to edge data
+    result_edge = edge.copy()
+    result_edge['qc_classification'] = classification
+    result_edge['qc_phase'] = 'phase1_entity_identification'
+    
+    # Add entity names for webapp display
+    if nodes:
+        subject_node = nodes.get(edge['subject'])
+        object_node = nodes.get(edge['object'])
         
         result_edge['subject_name'] = subject_node.get('name', edge['subject']) if subject_node else edge['subject']
         result_edge['object_name'] = object_node.get('name', edge['object']) if object_node else edge['object']
-        
-        # Add debug information for synonym highlighting
-        if debug_info:
-            result_edge['qc_debug'] = debug_info
-        
-        # Choose output file
-        if classification == 'good':
-            output_file = self.good_edges_file
-        elif classification == 'bad':
-            output_file = self.bad_edges_file
-        else:  # ambiguous
-            output_file = self.ambiguous_edges_file
-        
-        # Write to file
-        with open(output_file, 'a') as f:
-            f.write(json.dumps(result_edge) + '\n')
+    else:
+        result_edge['subject_name'] = edge['subject']
+        result_edge['object_name'] = edge['object']
     
-    def collect_all_synonyms_from_batch(self, edges: List[Dict[str, Any]]) -> Dict[str, Set[str]]:
-        """
-        Collect all unique synonyms from a batch of edges, grouped by biolink type.
-        
-        Args:
-            edges: List of edges to process
-            
-        Returns:
-            Dictionary mapping biolink types to sets of unique synonyms
-        """
-        synonym_groups = defaultdict(set)
-        
-        for edge in edges:
-            # Get edge text
-            edge_text = edge.get('sentences', '')
-            if not edge_text or edge_text == 'NA':
-                continue
-                
-            # Extract synonyms from text (same logic as find_synonyms_in_text)
-            synonyms = set()
-            for curie in [edge.get('subject'), edge.get('object')]:
-                if curie and curie in self.synonyms_data:
-                    synonym_list = self.synonyms_data[curie]
-                    if synonym_list:
-                        synonyms.update(synonym_list)
-            
-            # Find synonyms in text and group by biolink type
-            for synonym in synonyms:
-                if self.find_synonyms_in_text(edge_text, [synonym]):
-                    # For now, we'll use a default group since we don't have biolink types
-                    # TODO: Enhance this to actually group by biolink type when available
-                    synonym_groups['default'].add(synonym)
-        
-        return synonym_groups
+    # Add debug information for synonym highlighting
+    if debug_info:
+        result_edge['qc_debug'] = debug_info
     
-    def execute_bulk_lookups(self, synonym_groups: Dict[str, Set[str]]) -> Dict[str, List[Dict[str, Any]]]:
-        """
-        Execute bulk lookups for grouped synonyms and return cached results.
-        
-        Args:
-            synonym_groups: Dictionary mapping biolink types to synonym sets
-            
-        Returns:
-            Dictionary mapping synonyms to their lookup results
-        """
-        lookup_cache = {}
-        
-        for group_type, synonyms in synonym_groups.items():
-            if not synonyms:
-                continue
-                
-            synonym_list = list(synonyms)
-            print(f"Executing bulk lookup for {len(synonym_list)} {group_type} synonyms")
-            
-            try:
-                # Execute bulk lookup
-                bulk_results = bulk_lookup_names(synonym_list, limit=10)
-                
-                # Store results in cache
-                for synonym, results in bulk_results.items():
-                    lookup_cache[synonym] = results
-                    
-            except APIException as e:
-                print(f"Warning: Bulk lookup failed for {group_type} group: {e}")
-                # Fallback to individual lookups for this group
-                for synonym in synonyms:
-                    try:
-                        lookup_cache[synonym] = lookup_names(synonym, limit=10)
-                    except APIException:
-                        print(f"Warning: Could not lookup synonym '{synonym}'")
-                        lookup_cache[synonym] = []
-        
-        return lookup_cache
+    # Add a unique edge identifier for debugging
+    if 'edge_id' not in result_edge:
+        result_edge['edge_id'] = str(uuid.uuid4())
     
-    
-    
-    def classify_edge(self, edge: Dict[str, Any], 
-                      lookup_cache: Dict[str, List[Dict[str, Any]]],
-                      normalized_data: Dict[str, Any],
-                      synonyms_data: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-        """
-        Classify an edge using cached lookup results instead of making API calls.
-        
-        Args:
-            edge: Edge to classify
-            lookup_cache: Cached lookup results
-            normalized_data: Normalized entity data
-            synonyms_data: Synonym data
-            
-        Returns:
-            Tuple of (classification, debug_info)
-        """
-        # This is similar to classify_edge but uses lookup_cache instead of calling lookup_names
-        debug_info = {
-            'subject_curie': edge.get('subject'),
-            'object_curie': edge.get('object'),
-            'edge_text': edge.get('sentences', 'NA')
-        }
-        
-        # Check if we have sentences
-        if not edge.get('sentences') or edge.get('sentences') == 'NA':
-            debug_info['reason'] = 'No supporting text available'
-            return 'bad', debug_info
-            
-        # Get normalized CURIEs first
-        subject_data = normalized_data.get(edge.get('subject'), {})
-        object_data = normalized_data.get(edge.get('object'), {})
-        
-        if not subject_data or not object_data:
-            debug_info['reason'] = 'Missing normalized data for subject or object'
-            return 'bad', debug_info
-            
-        subject_preferred = subject_data.get('id', {}).get('identifier') if subject_data else None
-        object_preferred = object_data.get('id', {}).get('identifier') if object_data else None
-        
-        if not subject_preferred or not object_preferred:
-            debug_info['reason'] = 'Missing preferred identifiers for subject or object'
-            return 'bad', debug_info
-        
-        # Get entity synonyms using preferred CURIEs
-        subject_synonyms_data = synonyms_data.get(subject_preferred, {})
-        object_synonyms_data = synonyms_data.get(object_preferred, {})
-        
-        subject_synonyms = subject_synonyms_data.get('names', []) if subject_synonyms_data else []
-        object_synonyms = object_synonyms_data.get('names', []) if object_synonyms_data else []
-        
-        if not subject_synonyms or not object_synonyms:
-            debug_info['reason'] = 'Missing synonyms for subject or object'
-            return 'bad', debug_info
-        
-        # Check subject and object using cached lookups
-        subject_found = self._check_entity_in_text_with_cache(
-            edge.get('sentences'), subject_synonyms, lookup_cache, debug_info, 'subject')
-        object_found = self._check_entity_in_text_with_cache(
-            edge.get('sentences'), object_synonyms, lookup_cache, debug_info, 'object')
-        
-        # Check for ambiguity first (like in the original classify_edge method)
-        subject_ambiguous = debug_info.get('subject_ambiguous', False)
-        object_ambiguous = debug_info.get('object_ambiguous', False)
-        
-        if subject_ambiguous or object_ambiguous:
-            return 'ambiguous', debug_info
-        
-        # Classification logic
-        if subject_found and object_found:
-            return 'good', debug_info
-        elif not subject_found and not object_found:
-            debug_info['reason'] = 'Neither subject nor object found in text'
-            return 'bad', debug_info
-        else:
-            if not subject_found:
-                debug_info['reason'] = 'Subject not found in text'
-            else:
-                debug_info['reason'] = 'Object not found in text'
-            return 'bad', debug_info
-    
-    def _check_entity_in_text_with_cache(self, text: str, synonyms: List[str], 
-                                        lookup_cache: Dict[str, List[Dict[str, Any]]], 
-                                        debug_info: Dict[str, Any], entity_type: str) -> bool:
-        """
-        Check if an entity is found in text using cached lookup results.
-        Returns True if found (regardless of ambiguity), False if not found.
-        Ambiguity is stored separately in debug_info.
-        """
-        found_synonyms = self.find_synonyms_in_text(text, synonyms)
-        if not found_synonyms:
-            debug_info[f'{entity_type}_synonyms_found'] = []
-            debug_info[f'{entity_type}_ambiguous'] = False
-            return False
-        
-        # Use the enhanced ambiguity logic with cached results
-        is_ambiguous, filtered_lookup_data = self.check_ambiguous_matches_with_cache(found_synonyms, lookup_cache)
-        
-        # Store debug information
-        debug_info[f'{entity_type}_synonyms_found'] = found_synonyms
-        debug_info[f'{entity_type}_ambiguous'] = is_ambiguous
-        debug_info[f'{entity_type}_lookup_data'] = filtered_lookup_data
-        
-        # Return True if synonyms found (regardless of ambiguity)
-        # Ambiguity will be handled in the main classification logic
-        return True
-    
-    def check_ambiguous_matches_with_cache(self, synonyms: List[str], 
-                                          lookup_cache: Dict[str, List[Dict[str, Any]]]) -> Tuple[bool, Dict[str, List[Dict[str, Any]]]]:
-        """
-        Enhanced ambiguity checking using cached lookup results with preferred name logic.
-        
-        Args:
-            synonyms: List of synonyms found in text
-            lookup_cache: Cached lookup results
-            
-        Returns:
-            Tuple of (is_ambiguous, filtered_lookup_data)
-        """
-        lookup_data = {}
-        is_ambiguous = False
-        
-        for synonym in synonyms:
-            # Get cached lookup results
-            lookup_results = lookup_cache.get(synonym, [])
-            if not lookup_results:
-                continue
-                
-            # Get exact matches
-            exact_matches = get_exact_matches(lookup_results)
-            lookup_data[synonym] = exact_matches
-            
-            # Enhanced ambiguity logic: prefer matches where synonym is preferred name
-            if len(exact_matches) > 1:
-                # Check if exactly one match has this synonym as preferred name
-                preferred_matches = []
-                for match in exact_matches:
-                    # Check if the synonym matches the preferred label (case-insensitive)
-                    preferred_label = match.get('label', '').lower()
-                    if synonym.lower() == preferred_label:
-                        preferred_matches.append(match)
-                
-                # If exactly one match has the synonym as preferred name, it's not ambiguous
-                if len(preferred_matches) == 1:
-                    # Keep only the preferred match in lookup data
-                    lookup_data[synonym] = preferred_matches
-                else:
-                    # Still ambiguous - either 0 or multiple preferred matches
-                    is_ambiguous = True
-        
-        return is_ambiguous, lookup_data
-    
+    # Write to appropriate output file
+    output_key = f'{classification}_edges'
+    if output_key in output_files:
+        output_files[output_key].write(json.dumps(result_edge) + '\n')
+        output_files[output_key].flush()
 
+
+def check_entity_in_text_with_cache(text: str, synonyms: List[str], 
+                                   lookup_cache: Dict[str, List[Dict[str, Any]]], 
+                                   debug_info: Dict[str, Any], entity_role: str) -> bool:
+    """
+    Check if entity is found in text using synonyms and lookup cache.
     
+    Args:
+        text: Text to search in
+        synonyms: Entity synonyms
+        lookup_cache: Pre-computed lookup results
+        debug_info: Debug info dictionary to update
+        entity_role: 'subject' or 'object' for debug labeling
+        
+    Returns:
+        True if entity found in text
+    """
+    found_synonyms = find_synonyms_in_text(text, synonyms)
+    debug_info[f'{entity_role}_synonyms_found'] = found_synonyms
     
-    def run_streaming(self, batch_size: int = 1000, max_edges: int = None) -> None:
-        """
-        Run Phase 1 classification using streaming processing.
-        Processes edges in chunks without loading the entire dataset into memory.
-        
-        Args:
-            batch_size: Number of edges to process in each streaming batch
-            max_edges: Maximum number of edges to process (for testing)
-        """
-        overall_start_time = time.time()
-        print("Starting Phase 1 edge classification (streaming mode)...")
-        
-        # Only load nodes into memory (much smaller - ~400MB vs ~2GB)
-        start_time = time.time()
-        print("Loading nodes...")
-        nodes = {}
-        with open(self.nodes_file, 'r') as f:
-            for line in f:
-                node = json.loads(line.strip())
-                nodes[node['id']] = node
-        print(f"Loaded {len(nodes)} nodes")
-        load_time = time.time() - start_time
-        print(f"Node loading completed in {load_time:.2f} seconds")
-        
-        # Get all unique entities by streaming through edges once
-        start_time = time.time()
-        print("Collecting unique entities by streaming through edges...")
-        entities = set()
-        total_edges_count = 0
-        
-        with open(self.edges_file, 'r') as f:
-            for i, line in enumerate(f):
-                if max_edges and i >= max_edges:
-                    break
-                edge = json.loads(line.strip())
-                entities.add(edge['subject'])
-                entities.add(edge['object'])
-                total_edges_count += 1
-        
-        entities = list(entities)
-        collect_time = time.time() - start_time
-        print(f"Found {len(entities)} unique entities from {total_edges_count} edges")
-        print(f"Entity collection completed in {collect_time:.2f} seconds")
-        
-        # Normalize entities and get synonyms
-        start_time = time.time()
-        print("Normalizing entities...")
-        normalized_data = batch_get_normalized_nodes(entities)
-        normalize_time = time.time() - start_time
-        print(f"Entity normalization completed in {normalize_time:.2f} seconds")
-        
-        start_time = time.time()
-        print("Getting synonyms...")
-        preferred_entities = [data['id']['identifier'] for data in normalized_data.values() if data]
-        synonyms_data = batch_get_synonyms(preferred_entities)
-        synonyms_time = time.time() - start_time
-        print(f"Synonym retrieval completed in {synonyms_time:.2f} seconds")
-        
-        # Stream process edges in batches
-        start_time = time.time()
-        print(f"Processing edges in streaming batches of {batch_size}...")
-        
-        # Initialize classification counts and output files
-        classification_counts = defaultdict(int)
-        output_files = self._create_output_files()
-        
-        processed_edges = 0
-        batch_num = 0
-        
-        with open(self.edges_file, 'r') as f:
-            batch_edges = []
+    if not found_synonyms:
+        return False
+    
+    # Check for ambiguous matches among found synonyms
+    found_ambiguous = []
+    lookup_data = {}
+    
+    for synonym in found_synonyms:
+        if synonym in lookup_cache:
+            lookup_results = lookup_cache[synonym]
+            lookup_data[synonym] = [format_lookup_result(result) for result in lookup_results[:5]]
             
-            for i, line in enumerate(f):
-                if max_edges and i >= max_edges:
-                    break
-                    
-                edge = json.loads(line.strip())
-                edge['edge_id'] = str(uuid.uuid4())
-                batch_edges.append(edge)
-                
-                # Process batch when full
-                if len(batch_edges) >= batch_size:
-                    batch_num += 1
-                    batch_start_time = time.time()
-                    
-                    # Process this batch using the batched lookup approach
-                    batch_results = self._process_streaming_batch(
-                        batch_edges, nodes, normalized_data, synonyms_data
-                    )
-                    
-                    # Update counts and write results
-                    for classification in batch_results:
-                        classification_counts[classification] += batch_results[classification]
-                    
-                    processed_edges += len(batch_edges)
-                    batch_time = time.time() - batch_start_time
-                    
-                    print(f"  Batch {batch_num}: processed {len(batch_edges)} edges in {batch_time:.3f}s "
-                          f"({len(batch_edges)/batch_time:.1f} edges/sec) - "
-                          f"Total: {processed_edges}/{total_edges_count}")
-                    
-                    # Clear batch to free memory
-                    batch_edges = []
+            # Check if this synonym has multiple distinct matches (ambiguous)
+            if len(lookup_results) > 1:
+                found_ambiguous.append(synonym)
+    
+    debug_info[f'{entity_role}_ambiguous'] = len(found_ambiguous) > 0
+    debug_info[f'{entity_role}_lookup_data'] = lookup_data
+    
+    return True
+
+
+def check_ambiguous_matches_with_cache(synonyms: List[str], 
+                                     lookup_cache: Dict[str, List[Dict[str, Any]]]) -> Tuple[bool, List[str], Dict[str, List[Dict[str, Any]]]]:
+    """
+    Check if any synonyms have ambiguous matches using cached lookup results.
+    
+    Args:
+        synonyms: List of synonyms to check
+        lookup_cache: Pre-computed lookup results for synonyms
+        
+    Returns:
+        Tuple of (has_ambiguous, ambiguous_synonyms, lookup_results)
+    """
+    ambiguous_synonyms = []
+    lookup_results = {}
+    
+    for synonym in synonyms:
+        if synonym in lookup_cache:
+            results = lookup_cache[synonym]
+            lookup_results[synonym] = results
             
-            # Process final partial batch
-            if batch_edges:
-                batch_num += 1
-                batch_start_time = time.time()
+            # Check for multiple matches (potential ambiguity)
+            if len(results) > 1:
+                ambiguous_synonyms.append(synonym)
+    
+    has_ambiguous = len(ambiguous_synonyms) > 0
+    return has_ambiguous, ambiguous_synonyms, lookup_results
+
+
+def classify_edge(edge: Dict[str, Any], 
+                 lookup_cache: Dict[str, List[Dict[str, Any]]], 
+                 normalized_data: Dict[str, Any],
+                 synonyms_data: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    """
+    Classify a single edge as good, bad, or ambiguous.
+    
+    Args:
+        edge: Edge dictionary with subject, object, sentences
+        lookup_cache: Pre-computed lookup results for all synonyms
+        normalized_data: Entity normalization data
+        synonyms_data: Entity synonym data
+    
+    Returns:
+        Tuple of (classification, debug_info)
+    """
+    debug_info = {
+        'subject_curie': edge.get('subject', 'N/A'),
+        'object_curie': edge.get('object', 'N/A'),
+        'edge_text': edge.get('sentences', '')
+    }
+    
+    # Get entity data
+    subject_entity = edge.get('subject')
+    object_entity = edge.get('object')
+    
+    # Check if we have synonyms for both entities
+    if subject_entity not in synonyms_data:
+        debug_info['reason'] = f'Missing synonyms for subject or object'
+        return 'bad', debug_info
+    
+    if object_entity not in synonyms_data:
+        debug_info['reason'] = f'Missing synonyms for subject or object'
+        return 'bad', debug_info
+    
+    subject_synonyms = synonyms_data[subject_entity].get('names', [])
+    object_synonyms = synonyms_data[object_entity].get('names', [])
+    
+    # Get text for analysis
+    text = edge.get('sentences', '')
+    
+    # Check for valid text
+    if not text or text.strip() == '' or text.strip().upper() == 'NA':
+        debug_info['reason'] = 'No supporting text available'
+        return 'bad', debug_info
+    
+    # Check if both entities are found in text
+    subject_found = check_entity_in_text_with_cache(
+        text, subject_synonyms, lookup_cache, debug_info, 'subject'
+    )
+    object_found = check_entity_in_text_with_cache(
+        text, object_synonyms, lookup_cache, debug_info, 'object'
+    )
+    
+    # If either entity not found, classify as bad
+    if not subject_found:
+        debug_info['reason'] = 'Subject not found in text'
+        return 'bad', debug_info
+    
+    if not object_found:
+        debug_info['reason'] = 'Object not found in text'
+        return 'bad', debug_info
+    
+    # Check for ambiguous matches
+    all_found_synonyms = debug_info.get('subject_synonyms_found', []) + debug_info.get('object_synonyms_found', [])
+    
+    has_ambiguous = False
+    for synonym in all_found_synonyms:
+        if synonym in lookup_cache and len(lookup_cache[synonym]) > 1:
+            has_ambiguous = True
+            break
+    
+    if has_ambiguous:
+        debug_info['reason'] = 'Ambiguous entity matches found'
+        return 'ambiguous', debug_info
+    
+    # If we get here, both entities found and no ambiguity
+    debug_info['reason'] = 'Both entities found unambiguously in text'
+    return 'good', debug_info
+
+
+def create_output_files(output_dir: str) -> Dict[str, Any]:
+    """
+    Create and return output file handles.
+    
+    Args:
+        output_dir: Output directory path
+        
+    Returns:
+        Dictionary of output file handles
+    """
+    output_path = Path(output_dir)
+    output_path.mkdir(exist_ok=True)
+    
+    output_files = {
+        'good_edges': open(output_path / "good_edges.jsonl", 'w'),
+        'bad_edges': open(output_path / "bad_edges.jsonl", 'w'), 
+        'ambiguous_edges': open(output_path / "ambiguous_edges.jsonl", 'w')
+    }
+    
+    return output_files
+
+
+def close_output_files(output_files: Dict[str, Any]) -> None:
+    """Close all output file handles."""
+    for f in output_files.values():
+        f.close()
+
+
+# ============================================================================
+# 4-STAGE PIPELINE FUNCTIONS
+# ============================================================================
+
+def stage1_entity_collection_and_normalization(edges_file: str, max_edges: int = None) -> Tuple[List[str], Dict[str, Any]]:
+    """
+    Stage 1: Entity Collection & Normalization
+    
+    Collect unique entities from edges file and normalize them using Node Normalizer API.
+    
+    Args:
+        edges_file: Path to JSONL file with edges
+        max_edges: Maximum edges to process (None for all)
+        
+    Returns:
+        Tuple of (entities_list, normalized_data_dict)
+    """
+    print("=== STAGE 1: Entity Collection & Normalization ===")
+    
+    # Collect unique entities by streaming through edges
+    print("Collecting unique entities by streaming through edges...")
+    start_time = time.time()
+    entities = set()
+    edge_count = 0
+    
+    with open(edges_file, 'r') as f:
+        for line in f:
+            if line.strip():
+                edge = json.loads(line)
+                entities.add(edge.get('subject'))
+                entities.add(edge.get('object'))
+                edge_count += 1
                 
-                batch_results = self._process_streaming_batch(
-                    batch_edges, nodes, normalized_data, synonyms_data
+                if max_edges and edge_count >= max_edges:
+                    break
+    
+    entities = list(entities)
+    entities_time = time.time() - start_time
+    print(f"Found {len(entities)} unique entities from {edge_count} edges")
+    print(f"Entity collection completed in {entities_time:.2f} seconds")
+    
+    # Normalize entities
+    print("Normalizing entities...")
+    start_time = time.time()
+    normalized_data = batch_get_normalized_nodes(entities)
+    normalize_time = time.time() - start_time
+    print(f"Entity normalization completed in {normalize_time:.2f} seconds")
+    
+    return entities, normalized_data
+
+
+def stage2_synonym_retrieval(normalized_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Stage 2: Synonym Retrieval
+    
+    Get synonyms for normalized entities using Name Resolver API.
+    
+    Args:
+        normalized_data: Entity normalization data from stage 1
+        
+    Returns:
+        Dictionary of synonym data
+    """
+    print("=== STAGE 2: Synonym Retrieval ===")
+    
+    # Get synonyms for preferred entities
+    print("Getting synonyms...")
+    start_time = time.time()
+    preferred_entities = [data['id']['identifier'] for data in normalized_data.values() if data]
+    synonyms_data = batch_get_synonyms(preferred_entities)
+    synonyms_time = time.time() - start_time
+    print(f"Synonym retrieval completed in {synonyms_time:.2f} seconds")
+    
+    return synonyms_data
+
+
+def stage3_text_matching_and_lookup(edge: Dict[str, Any], 
+                                   synonyms_data: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Stage 3: Text Matching & Lookup
+    
+    Find which synonyms from Stage 2 appear in the edge text, then perform reverse lookups
+    on those found synonyms to prepare for ambiguity evaluation in Stage 4.
+    
+    Args:
+        edge: Edge dictionary with subject, object, sentences
+        synonyms_data: Synonym data from stage 2
+        
+    Returns:
+        Lookup cache dictionary mapping found synonyms to their lookup results
+    """
+    print("=== STAGE 3: Text Matching & Lookup ===")
+    
+    # Get the supporting text
+    text = edge.get('sentences', '')
+    if not text or text.strip() in ['', 'NA']:
+        print("No supporting text available")
+        return {}
+    
+    # Find synonyms that appear in text
+    print("Finding synonyms in supporting text...")
+    start_time = time.time()
+    found_synonyms = set()
+    
+    # Check each entity's synonyms against the text
+    for entity_id, entity_synonyms in synonyms_data.items():
+        if 'names' in entity_synonyms:
+            for synonym in entity_synonyms['names']:
+                if synonym and synonym.strip() and synonym.lower() in text.lower():
+                    found_synonyms.add(synonym)
+    
+    print(f"Found {len(found_synonyms)} synonyms in text: {list(found_synonyms)[:5]}...")
+    
+    if not found_synonyms:
+        print("No synonyms found in text")
+        return {}
+    
+    # Execute reverse lookups for found synonyms with proper filtering
+    print("Performing reverse lookups for found synonyms...")
+    lookup_cache = {}
+    
+    # Group synonyms by their entity types for proper biolink filtering
+    for synonym in found_synonyms:
+        # Find which entity this synonym belongs to 
+        entity_types = []
+        for entity_id, entity_synonyms in synonyms_data.items():
+            if 'names' in entity_synonyms and synonym in entity_synonyms['names']:
+                entity_types = entity_synonyms.get('types', [])
+                break
+        
+        # Determine biolink type and taxon filtering
+        biolink_types = []
+        only_taxa = []
+        
+        # Map entity types to biolink types for lookup
+        for entity_type in entity_types:
+            if 'Gene' in entity_type or 'gene' in entity_type.lower():
+                biolink_types.append('Gene')
+                only_taxa.append('NCBITaxon:9606')  # Human taxon for genes
+            elif 'SmallMolecule' in entity_type or 'Chemical' in entity_type:
+                biolink_types.append('SmallMolecule')
+            elif 'Disease' in entity_type:
+                biolink_types.append('Disease')
+        
+        # Execute lookup with proper filtering
+        if biolink_types:
+            only_taxa_str = ','.join(only_taxa) if only_taxa else ""
+            results = bulk_lookup_names([synonym], 
+                                      biolink_types=biolink_types,
+                                      only_taxa=only_taxa_str,
+                                      limit=20)
+        else:
+            # Fallback: lookup without filtering
+            results = bulk_lookup_names([synonym], limit=20)
+        
+        # Filter to only perfect matches (exact synonym match, case insensitive)
+        if synonym in results:
+            perfect_matches = []
+            for result in results[synonym]:
+                synonyms_list = result.get('synonyms', [])
+                label = result.get('label', '')
+                
+                # Check if synonym appears exactly in synonyms list or as label (case insensitive)
+                has_exact_match = (
+                    synonym in synonyms_list or 
+                    synonym.upper() in [s.upper() for s in synonyms_list] or
+                    synonym.upper() == label.upper()
                 )
                 
-                for classification in batch_results:
-                    classification_counts[classification] += batch_results[classification]
+                if has_exact_match:
+                    perfect_matches.append(result)
+            
+            lookup_cache[synonym] = perfect_matches
+    
+    lookup_time = time.time() - start_time
+    print(f"Text matching and lookup completed in {lookup_time:.2f} seconds")
+    
+    return lookup_cache
+
+
+def stage4_classification_logic(edge: Dict[str, Any], 
+                               lookup_cache: Dict[str, List[Dict[str, Any]]],
+                               normalized_data: Dict[str, Any],
+                               synonyms_data: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    """
+    Stage 4: Classification Logic
+    
+    Classify a single edge as good, bad, or ambiguous.
+    This is the existing classify_edge function renamed for consistency.
+    
+    Args:
+        edge: Edge dictionary with subject, object, sentences
+        lookup_cache: Pre-computed lookup results from stage 3
+        normalized_data: Entity normalization data from stage 1
+        synonyms_data: Entity synonym data from stage 2
+        
+    Returns:
+        Tuple of (classification, debug_info)
+    """
+    return classify_edge(edge, lookup_cache, normalized_data, synonyms_data)
+
+
+# ============================================================================
+# MAIN PIPELINE FUNCTION
+# ============================================================================
+
+def run_streaming(edges_file: str, nodes_file: str, output_dir: str = "output", 
+                 batch_size: int = 1000, max_edges: int = None) -> None:
+    """
+    Run edge classification in streaming mode with batching.
+    
+    Args:
+        edges_file: Path to JSONL file with edges
+        nodes_file: Path to JSONL file with nodes
+        output_dir: Directory for output files
+        batch_size: Number of edges per batch
+        max_edges: Maximum edges to process (None for all)
+    """
+    print("Starting Phase 1 edge classification (streaming mode)...")
+    overall_start = time.time()
+    
+    # Load nodes for entity name lookup
+    print("Loading nodes...")
+    start_time = time.time()
+    nodes = {}
+    with open(nodes_file, 'r') as f:
+        for line in f:
+            if line.strip():
+                node = json.loads(line)
+                nodes[node['id']] = node
+    
+    nodes_time = time.time() - start_time
+    print(f"Loaded {len(nodes)} nodes")
+    print(f"Node loading completed in {nodes_time:.2f} seconds")
+    
+    # Clear existing output files and create new ones
+    output_path = Path(output_dir)
+    output_path.mkdir(exist_ok=True)
+    
+    for filename in ["good_edges.jsonl", "bad_edges.jsonl", "ambiguous_edges.jsonl"]:
+        filepath = output_path / filename
+        if filepath.exists():
+            filepath.unlink()
+    
+    # Execute Stages 1-2 globally (entity collection and synonyms)
+    entities, normalized_data = stage1_entity_collection_and_normalization(edges_file, max_edges)
+    synonyms_data = stage2_synonym_retrieval(normalized_data)
+    # Stages 3-4 are executed per-edge in the streaming batch processing
+    
+    # Process edges in streaming batches
+    print(f"Processing edges in streaming batches of {batch_size}...")
+    
+    output_files = create_output_files(output_dir)
+    
+    edge_count = 0
+    batch_num = 1
+    current_batch = []
+    
+    start_time = time.time()
+    
+    with open(edges_file, 'r') as f:
+        for line in f:
+            if line.strip():
+                edge = json.loads(line)
+                current_batch.append(edge)
+                edge_count += 1
                 
-                processed_edges += len(batch_edges)
-                batch_time = time.time() - batch_start_time
+                # Process batch when full or at end
+                if len(current_batch) >= batch_size or (max_edges and edge_count >= max_edges):
+                    is_final = (max_edges and edge_count >= max_edges)
+                    
+                    batch_start = time.time()
+                    process_streaming_batch(current_batch, nodes, normalized_data, synonyms_data, output_files)
+                    batch_time = time.time() - batch_start
+                    
+                    rate = len(current_batch) / batch_time if batch_time > 0 else 0
+                    final_text = " (final)" if is_final else ""
+                    print(f"  Batch {batch_num}{final_text}: processed {len(current_batch)} edges in {batch_time:.3f}s ({rate:.1f} edges/sec) - Total: {edge_count}/{edge_count}")
+                    
+                    current_batch = []
+                    batch_num += 1
                 
-                print(f"  Batch {batch_num} (final): processed {len(batch_edges)} edges in {batch_time:.3f}s "
-                      f"({len(batch_edges)/batch_time:.1f} edges/sec) - "
-                      f"Total: {processed_edges}/{total_edges_count}")
-        
-        # Close output files
-        for f in output_files.values():
-            f.close()
-        
-        processing_time = time.time() - start_time
-        total_time = time.time() - overall_start_time
-        
-        print(f"Edge processing completed in {processing_time:.2f} seconds")
-        print(f"Total runtime: {total_time:.2f} seconds")
-        
-        # Performance metrics
-        edges_per_second = processed_edges / processing_time if processing_time > 0 else 0
-        print(f"Processing rate: {edges_per_second:.1f} edges/second")
-        
-        # Print summary
-        print("\nClassification Summary:")
-        for classification, count in sorted(classification_counts.items()):
-            print(f"{classification.capitalize()} edges: {count}")
-        print(f"Total: {sum(classification_counts.values())}")
-        
-        print(f"\nTiming Breakdown:")
-        print(f"  Node loading: {load_time:.2f}s")
-        print(f"  Entity collection: {collect_time:.2f}s")
-        print(f"  Entity normalization: {normalize_time:.2f}s")
-        print(f"  Synonym retrieval: {synonyms_time:.2f}s")
-        print(f"  Edge processing: {processing_time:.2f}s")
-        print(f"  Total: {total_time:.2f}s")
-        
-        print(f"\nOutput files created:")
-        for classification in ['good', 'bad', 'ambiguous']:
-            file_path = Path(self.output_dir) / f"{classification}_edges.jsonl"
-            print(f"{classification.capitalize()} edges: {file_path}")
+                if max_edges and edge_count >= max_edges:
+                    break
     
-    def _process_streaming_batch(self, batch_edges: List[Dict[str, Any]], nodes: Dict[str, Any], 
-                                normalized_data: Dict[str, Any], synonyms_data: Dict[str, Any]) -> Dict[str, int]:
-        """
-        Process a batch of edges using the same batched lookup approach.
-        
-        Args:
-            batch_edges: List of edges to process
-            nodes: Node data dictionary
-            normalized_data: Normalized entity data
-            synonyms_data: Synonym data
-            
-        Returns:
-            Dictionary with classification counts for this batch
-        """
-        # Use existing batched processing logic
-        # 1. Collect synonyms from this batch
-        synonym_groups = self._collect_synonyms_from_batch(batch_edges, normalized_data, synonyms_data)
-        
-        # 2. Execute bulk lookups
-        lookup_cache = self._execute_bulk_lookups(synonym_groups)
-        
-        # 3. Process batch with cache and write results
-        classification_counts = defaultdict(int)
-        
-        for edge in batch_edges:
-            # Add entity names
-            edge['subject_name'] = nodes.get(edge['subject'], {}).get('name', 'Unknown')
-            edge['object_name'] = nodes.get(edge['object'], {}).get('name', 'Unknown')
-            
-            # Classify edge
-            classification, debug_info = self.classify_edge(edge, lookup_cache, 
-                                                           normalized_data, synonyms_data)
-            classification_counts[classification] += 1
-            
-            # Write result immediately
-            self.write_edge_result(edge, classification, debug_info)
-        
-        return dict(classification_counts)
+    # Process remaining edges if any
+    if current_batch:
+        batch_start = time.time()
+        process_streaming_batch(current_batch, nodes, normalized_data, synonyms_data, output_files)
+        batch_time = time.time() - batch_start
+        rate = len(current_batch) / batch_time if batch_time > 0 else 0
+        print(f"  Final batch: processed {len(current_batch)} edges in {batch_time:.3f}s ({rate:.1f} edges/sec)")
     
-    def _collect_synonyms_from_batch(self, batch_edges: List[Dict[str, Any]], 
-                                   normalized_data: Dict[str, Any], synonyms_data: Dict[str, Any]) -> Dict[str, Set[str]]:
-        """
-        Collect all unique synonyms from a batch, grouped by biolink type (reusing existing logic).
-        """
-        # Temporarily set edges for existing method to work
-        original_edges = self.edges if hasattr(self, 'edges') else []
-        original_normalized = self.normalized_data if hasattr(self, 'normalized_data') else {}
-        original_synonyms = self.synonyms_data if hasattr(self, 'synonyms_data') else {}
-        
-        self.edges = batch_edges
-        self.normalized_data = normalized_data
-        self.synonyms_data = synonyms_data
-        
-        try:
-            result = self.collect_all_synonyms_from_batch(batch_edges)
-            return result
-        finally:
-            # Restore original data
-            self.edges = original_edges
-            self.normalized_data = original_normalized
-            self.synonyms_data = original_synonyms
+    process_time = time.time() - start_time
+    print(f"Edge processing completed in {process_time:.2f} seconds")
     
-    def _execute_bulk_lookups(self, synonym_groups: Dict[str, Set[str]]) -> Dict[str, List[Dict[str, Any]]]:
-        """Execute bulk lookups (reusing existing logic)."""
-        return self.execute_bulk_lookups(synonym_groups)
+    # Close output files
+    close_output_files(output_files)
     
-    def _create_output_files(self) -> Dict[str, Any]:
-        """Create and return output file handles."""
-        os.makedirs(self.output_dir, exist_ok=True)
+    # Final statistics
+    total_time = time.time() - overall_start
+    rate = edge_count / total_time if total_time > 0 else 0
+    
+    print(f"Total runtime: {total_time:.2f} seconds")
+    print(f"Processing rate: {rate:.1f} edges/second")
+    
+    # Count results
+    output_files_paths = {
+        'good_edges': output_path / "good_edges.jsonl",
+        'bad_edges': output_path / "bad_edges.jsonl",
+        'ambiguous_edges': output_path / "ambiguous_edges.jsonl"
+    }
+    
+    counts = {}
+    for category, filepath in output_files_paths.items():
+        count = 0
+        if filepath.exists():
+            with open(filepath, 'r') as f:
+                for line in f:
+                    if line.strip():
+                        count += 1
+        counts[category.replace('_edges', '')] = count
+    
+    print("\nClassification Summary:")
+    for category, count in counts.items():
+        if count > 0:
+            print(f"{category.title()} edges: {count}")
+    print(f"Total: {sum(counts.values())}")
+    
+    print("\nTiming Breakdown:")
+    print(f"  Node loading: {nodes_time:.2f}s")
+    print(f"  Entity collection: {entities_time:.2f}s") 
+    print(f"  Entity normalization: {normalize_time:.2f}s")
+    print(f"  Synonym retrieval: {synonyms_time:.2f}s")
+    print(f"  Edge processing: {process_time:.2f}s")
+    print(f"  Total: {total_time:.2f}s")
+    
+    print(f"\nOutput files created:")
+    for category, filepath in output_files_paths.items():
+        print(f"{category.title().replace('_', ' ')}: {filepath}")
+
+
+def process_streaming_batch(batch_edges: List[Dict[str, Any]], nodes: Dict[str, Any], 
+                          normalized_data: Dict[str, Any], synonyms_data: Dict[str, Any],
+                          output_files: Dict[str, Any]) -> None:
+    """Process a batch of edges in streaming mode."""
+    
+    # Collect all synonyms from this batch
+    synonym_groups = collect_synonyms_from_batch(batch_edges, synonyms_data)
+    
+    # Execute bulk lookups
+    lookup_cache = execute_bulk_lookups(synonym_groups)
+    
+    # Classify each edge in the batch using Stage 4
+    for edge in batch_edges:
+        classification, debug_info = stage4_classification_logic(edge, lookup_cache, normalized_data, synonyms_data)
+        write_edge_result(edge, classification, output_files, nodes, debug_info)
+
+
+def collect_synonyms_from_batch(batch_edges: List[Dict[str, Any]], 
+                               synonyms_data: Dict[str, Any]) -> Dict[str, Set[str]]:
+    """Collect all synonyms needed for a batch of edges."""
+    synonym_groups = defaultdict(set)
+    
+    for edge in batch_edges:
+        subject_entity = edge.get('subject')
+        object_entity = edge.get('object')
         
-        output_files = {}
-        for classification in ['good', 'bad', 'ambiguous']:
-            file_path = Path(self.output_dir) / f"{classification}_edges.jsonl"
-            output_files[classification] = open(file_path, 'w')
+        if subject_entity in synonyms_data:
+            subject_synonyms = synonyms_data[subject_entity].get('names', [])
+            synonym_groups['batch_synonyms'].update(subject_synonyms)
         
-        return output_files
+        if object_entity in synonyms_data:
+            object_synonyms = synonyms_data[object_entity].get('names', [])
+            synonym_groups['batch_synonyms'].update(object_synonyms)
+    
+    return synonym_groups
+
+
+def execute_bulk_lookups(synonym_groups: Dict[str, Set[str]]) -> Dict[str, List[Dict[str, Any]]]:
+    """Execute bulk lookups for synonym groups."""
+    lookup_cache = {}
+    
+    for group_name, synonyms in synonym_groups.items():
+        if synonyms:
+            synonyms_list = list(synonyms)
+            group_results = bulk_lookup_names(synonyms_list, limit=20)
+            lookup_cache.update(group_results)
+    
+    return lookup_cache
 
 
 def main():
-    """Main function for command-line usage."""
-    import argparse
-    
-    parser = argparse.ArgumentParser(description='Phase 1 edge classification')
-    parser.add_argument('--edges', required=True, help='Path to edges JSONL file')
-    parser.add_argument('--nodes', required=True, help='Path to nodes JSONL file')
-    parser.add_argument('--output-dir', default='output', help='Output directory')
-    parser.add_argument('--max-edges', type=int, help='Maximum number of edges to process (for testing)')
-    parser.add_argument('--batch-size', type=int, default=1000, help='Batch size for streaming processing (default: 1000)')
+    """Main function with argument parsing."""
+    parser = argparse.ArgumentParser(description="Phase 1 Edge Classification")
+    parser.add_argument("edges_file", help="Path to edges JSONL file")
+    parser.add_argument("nodes_file", help="Path to nodes JSONL file") 
+    parser.add_argument("--output", default="output", help="Output directory (default: output)")
+    parser.add_argument("--batch-size", type=int, default=1000, help="Batch size for processing")
+    parser.add_argument("--max-edges", type=int, help="Maximum edges to process")
     
     args = parser.parse_args()
     
-    classifier = EdgeClassifier(args.edges, args.nodes, args.output_dir)
-    classifier.run_streaming(batch_size=args.batch_size, max_edges=args.max_edges)
+    run_streaming(args.edges_file, args.nodes_file, args.output, args.batch_size, args.max_edges)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
