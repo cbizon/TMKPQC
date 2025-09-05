@@ -217,17 +217,28 @@ def classify_edge(edge: Dict[str, Any],
     subject_entity = edge.get('subject')
     object_entity = edge.get('object')
     
-    # Check if we have synonyms for both entities
-    if subject_entity not in synonyms_data:
-        debug_info['reason'] = f'Missing synonyms for subject or object'
+    # Get normalized entity IDs for synonym lookup
+    # synonyms_data uses normalized IDs, not original edge IDs
+    subject_normalized_id = subject_entity
+    object_normalized_id = object_entity
+    
+    # Look up normalized IDs if normalization data exists
+    if subject_entity in normalized_data:
+        subject_normalized_id = normalized_data[subject_entity]['id']['identifier']
+    if object_entity in normalized_data:
+        object_normalized_id = normalized_data[object_entity]['id']['identifier']
+    
+    # Check if we have synonyms for both entities (using normalized IDs)
+    if subject_normalized_id not in synonyms_data:
+        debug_info['reason'] = f'Missing synonyms for subject {subject_entity} (normalized: {subject_normalized_id})'
         return 'bad', debug_info
     
-    if object_entity not in synonyms_data:
-        debug_info['reason'] = f'Missing synonyms for subject or object'
+    if object_normalized_id not in synonyms_data:
+        debug_info['reason'] = f'Missing synonyms for object {object_entity} (normalized: {object_normalized_id})'
         return 'bad', debug_info
     
-    subject_synonyms = synonyms_data[subject_entity].get('names', [])
-    object_synonyms = synonyms_data[object_entity].get('names', [])
+    subject_synonyms = synonyms_data[subject_normalized_id].get('names', [])
+    object_synonyms = synonyms_data[object_normalized_id].get('names', [])
     
     # Get text for analysis
     text = edge.get('sentences', '')
@@ -391,17 +402,13 @@ def stage3_text_matching_and_lookup(edge: Dict[str, Any],
     Returns:
         Lookup cache dictionary mapping found synonyms to their lookup results
     """
-    print("=== STAGE 3: Text Matching & Lookup ===")
     
     # Get the supporting text
     text = edge.get('sentences', '')
     if not text or text.strip() in ['', 'NA']:
-        print("No supporting text available")
         return {}
     
     # Find synonyms that appear in text
-    print("Finding synonyms in supporting text...")
-    start_time = time.time()
     found_synonyms = set()
     
     # Check each entity's synonyms against the text
@@ -411,14 +418,10 @@ def stage3_text_matching_and_lookup(edge: Dict[str, Any],
                 if synonym and synonym.strip() and synonym.lower() in text.lower():
                     found_synonyms.add(synonym)
     
-    print(f"Found {len(found_synonyms)} synonyms in text: {list(found_synonyms)[:5]}...")
-    
     if not found_synonyms:
-        print("No synonyms found in text")
         return {}
     
     # Execute reverse lookups for found synonyms with proper filtering
-    print("Performing reverse lookups for found synonyms...")
     lookup_cache = {}
     
     # Group synonyms by their entity types for proper biolink filtering
@@ -435,14 +438,9 @@ def stage3_text_matching_and_lookup(edge: Dict[str, Any],
         only_taxa = []
         
         # Map entity types to biolink types for lookup
-        for entity_type in entity_types:
-            if 'Gene' in entity_type or 'gene' in entity_type.lower():
-                biolink_types.append('Gene')
-                only_taxa.append('NCBITaxon:9606')  # Human taxon for genes
-            elif 'SmallMolecule' in entity_type or 'Chemical' in entity_type:
-                biolink_types.append('SmallMolecule')
-            elif 'Disease' in entity_type:
-                biolink_types.append('Disease')
+        biolink_types.append(entity_types[0])
+        if entity_types[0] == 'Gene':
+            only_taxa.append('NCBITaxon:9606')  # Human taxon for genes
         
         # Execute lookup with proper filtering
         if biolink_types:
@@ -474,8 +472,6 @@ def stage3_text_matching_and_lookup(edge: Dict[str, Any],
             
             lookup_cache[synonym] = perfect_matches
     
-    lookup_time = time.time() - start_time
-    print(f"Text matching and lookup completed in {lookup_time:.2f} seconds")
     
     return lookup_cache
 
@@ -629,13 +625,6 @@ def run_streaming(edges_file: str, nodes_file: str, output_dir: str = "output",
             print(f"{category.title()} edges: {count}")
     print(f"Total: {sum(counts.values())}")
     
-    print("\nTiming Breakdown:")
-    print(f"  Node loading: {nodes_time:.2f}s")
-    print(f"  Entity collection: {entities_time:.2f}s") 
-    print(f"  Entity normalization: {normalize_time:.2f}s")
-    print(f"  Synonym retrieval: {synonyms_time:.2f}s")
-    print(f"  Edge processing: {process_time:.2f}s")
-    print(f"  Total: {total_time:.2f}s")
     
     print(f"\nOutput files created:")
     for category, filepath in output_files_paths.items():
@@ -645,17 +634,16 @@ def run_streaming(edges_file: str, nodes_file: str, output_dir: str = "output",
 def process_streaming_batch(batch_edges: List[Dict[str, Any]], nodes: Dict[str, Any], 
                           normalized_data: Dict[str, Any], synonyms_data: Dict[str, Any],
                           output_files: Dict[str, Any]) -> None:
-    """Process a batch of edges in streaming mode."""
+    """Process a batch of edges using the validated 4-stage pipeline."""
     
-    # Collect all synonyms from this batch
-    synonym_groups = collect_synonyms_from_batch(batch_edges, synonyms_data)
-    
-    # Execute bulk lookups
-    lookup_cache = execute_bulk_lookups(synonym_groups)
-    
-    # Classify each edge in the batch using Stage 4
-    for edge in batch_edges:
+    # Process each edge through Stage 3 and Stage 4
+    for i, edge in enumerate(batch_edges):
+        # Stage 3: Text matching and lookup
+        lookup_cache = stage3_text_matching_and_lookup(edge, synonyms_data)
+        
+        # Stage 4: Classification
         classification, debug_info = stage4_classification_logic(edge, lookup_cache, normalized_data, synonyms_data)
+        
         write_edge_result(edge, classification, output_files, nodes, debug_info)
 
 
