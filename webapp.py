@@ -2,7 +2,7 @@
 Flask web application for reviewing classified edges.
 
 This webapp allows human reviewers to examine edges that have been classified
-by the Phase 1 system as good, bad, or ambiguous.
+by the Phase 1 system as passed, unresolved, or ambiguous entity resolution.
 """
 
 import json
@@ -13,6 +13,8 @@ from typing import List, Dict, Any, Optional
 
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 
+from phase1 import CLASSIFICATION_PASSED, CLASSIFICATION_UNRESOLVED, CLASSIFICATION_AMBIGUOUS, CLASSIFICATION_FILE_MAPPING
+
 
 class EdgeReviewer:
     """Class to handle loading and managing classified edges."""
@@ -20,14 +22,14 @@ class EdgeReviewer:
     def __init__(self, output_dir: str = "output"):
         self.output_dir = Path(output_dir)
         self.edges = {
-            'good': [],
-            'bad': [],
-            'ambiguous': []
+            CLASSIFICATION_PASSED: [],
+            CLASSIFICATION_UNRESOLVED: [],
+            CLASSIFICATION_AMBIGUOUS: []
         }
         self.current_indices = {
-            'good': 0,
-            'bad': 0,
-            'ambiguous': 0
+            CLASSIFICATION_PASSED: 0,
+            CLASSIFICATION_UNRESOLVED: 0,
+            CLASSIFICATION_AMBIGUOUS: 0
         }
         self.load_all_edges()
     
@@ -53,13 +55,13 @@ class EdgeReviewer:
         """Load all classified edges from output files."""
         print("Loading classified edges...")
         
-        self.edges['good'] = self.load_edges_from_file("good_edges.jsonl")
-        self.edges['bad'] = self.load_edges_from_file("bad_edges.jsonl")
-        self.edges['ambiguous'] = self.load_edges_from_file("ambiguous_edges.jsonl")
+        self.edges[CLASSIFICATION_PASSED] = self.load_edges_from_file(f"{CLASSIFICATION_FILE_MAPPING[CLASSIFICATION_PASSED]}.jsonl")
+        self.edges[CLASSIFICATION_UNRESOLVED] = self.load_edges_from_file(f"{CLASSIFICATION_FILE_MAPPING[CLASSIFICATION_UNRESOLVED]}.jsonl")
+        self.edges[CLASSIFICATION_AMBIGUOUS] = self.load_edges_from_file(f"{CLASSIFICATION_FILE_MAPPING[CLASSIFICATION_AMBIGUOUS]}.jsonl")
         
-        print(f"Loaded edges - Good: {len(self.edges['good'])}, "
-              f"Bad: {len(self.edges['bad'])}, "
-              f"Ambiguous: {len(self.edges['ambiguous'])}")
+        print(f"Loaded edges - {CLASSIFICATION_PASSED}: {len(self.edges[CLASSIFICATION_PASSED])}, "
+              f"{CLASSIFICATION_UNRESOLVED}: {len(self.edges[CLASSIFICATION_UNRESOLVED])}, "
+              f"{CLASSIFICATION_AMBIGUOUS}: {len(self.edges[CLASSIFICATION_AMBIGUOUS])}")
     
     def get_edge_count(self, classification: str) -> int:
         """Get count of edges for a classification."""
@@ -104,9 +106,9 @@ class EdgeReviewer:
     def get_edge_summary(self) -> Dict[str, int]:
         """Get summary of edge counts."""
         return {
-            'good': len(self.edges['good']),
-            'bad': len(self.edges['bad']),
-            'ambiguous': len(self.edges['ambiguous']),
+            CLASSIFICATION_PASSED: len(self.edges[CLASSIFICATION_PASSED]),
+            CLASSIFICATION_UNRESOLVED: len(self.edges[CLASSIFICATION_UNRESOLVED]),
+            CLASSIFICATION_AMBIGUOUS: len(self.edges[CLASSIFICATION_AMBIGUOUS]),
             'total': sum(len(edges) for edges in self.edges.values())
         }
 
@@ -127,7 +129,7 @@ def index():
 @app.route('/edges/<classification>/<int:index>')
 def view_edges(classification: str, index: int = None):
     """View edges by classification."""
-    if classification not in ['good', 'bad', 'ambiguous']:
+    if classification not in [CLASSIFICATION_PASSED, CLASSIFICATION_UNRESOLVED, CLASSIFICATION_AMBIGUOUS]:
         return redirect(url_for('index'))
     
     # Set index if provided
@@ -155,7 +157,7 @@ def view_edges(classification: str, index: int = None):
 @app.route('/api/edges/<classification>/navigate', methods=['POST'])
 def navigate_edge(classification: str):
     """API endpoint for edge navigation."""
-    if classification not in ['good', 'bad', 'ambiguous']:
+    if classification not in [CLASSIFICATION_PASSED, CLASSIFICATION_UNRESOLVED, CLASSIFICATION_AMBIGUOUS]:
         return jsonify({'error': 'Invalid classification'}), 400
     
     action = request.json.get('action')

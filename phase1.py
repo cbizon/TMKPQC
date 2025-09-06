@@ -27,6 +27,28 @@ from api_functions import (
 )
 
 
+# ============================================================================
+# CLASSIFICATION CONSTANTS
+# ============================================================================
+
+CLASSIFICATION_PASSED = "passed phase 1"
+CLASSIFICATION_UNRESOLVED = "unresolved entity"
+CLASSIFICATION_AMBIGUOUS = "ambiguous entity resolution"
+
+CLASSIFICATIONS = {
+    CLASSIFICATION_PASSED,
+    CLASSIFICATION_UNRESOLVED,
+    CLASSIFICATION_AMBIGUOUS
+}
+
+# For backwards compatibility and file naming
+CLASSIFICATION_FILE_MAPPING = {
+    CLASSIFICATION_PASSED: "passed_phase_1",
+    CLASSIFICATION_UNRESOLVED: "unresolved_entity", 
+    CLASSIFICATION_AMBIGUOUS: "ambiguous_entity_resolution"
+}
+
+
 def find_synonyms_in_text(text: str, synonyms: List[str]) -> List[str]:
     """
     Find which synonyms appear in the given text.
@@ -86,7 +108,7 @@ def write_edge_result(edge: Dict[str, Any], classification: str, output_files: D
     
     Args:
         edge: Edge dictionary
-        classification: Classification result ('good', 'bad', 'ambiguous')
+        classification: Classification result (CLASSIFICATION_PASSED, CLASSIFICATION_UNRESOLVED, CLASSIFICATION_AMBIGUOUS)
         output_files: Dictionary with output file handles
         nodes: Node data for entity names
         debug_info: Optional debug information including found synonyms
@@ -265,7 +287,7 @@ def classify_edge(edge: Dict[str, Any],
                  normalized_data: Dict[str, Any],
                  synonyms_data: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     """
-    Classify a single edge as good, bad, or ambiguous.
+    Classify a single edge as passed, unresolved, or ambiguous.
     
     Args:
         edge: Edge dictionary with subject, object, sentences
@@ -300,11 +322,11 @@ def classify_edge(edge: Dict[str, Any],
     # Check if we have synonyms for both entities (using normalized IDs)
     if subject_normalized_id not in synonyms_data:
         debug_info['reason'] = f'Missing synonyms for subject {subject_entity} (normalized: {subject_normalized_id})'
-        return 'bad', debug_info
+        return CLASSIFICATION_UNRESOLVED, debug_info
     
     if object_normalized_id not in synonyms_data:
         debug_info['reason'] = f'Missing synonyms for object {object_entity} (normalized: {object_normalized_id})'
-        return 'bad', debug_info
+        return CLASSIFICATION_UNRESOLVED, debug_info
     
     subject_synonyms = synonyms_data[subject_normalized_id].get('names', [])
     object_synonyms = synonyms_data[object_normalized_id].get('names', [])
@@ -315,7 +337,7 @@ def classify_edge(edge: Dict[str, Any],
     # Check for valid text
     if not text or text.strip() == '' or text.strip().upper() == 'NA':
         debug_info['reason'] = 'No supporting text available'
-        return 'bad', debug_info
+        return CLASSIFICATION_UNRESOLVED, debug_info
     
     # Check if both entities are found in text
     subject_found = check_entity_in_text_with_cache(
@@ -328,11 +350,11 @@ def classify_edge(edge: Dict[str, Any],
     # If either entity not found, classify as bad
     if not subject_found:
         debug_info['reason'] = 'Subject not found in text'
-        return 'bad', debug_info
+        return CLASSIFICATION_UNRESOLVED, debug_info
     
     if not object_found:
         debug_info['reason'] = 'Object not found in text'
-        return 'bad', debug_info
+        return CLASSIFICATION_UNRESOLVED, debug_info
     
     # Check for ambiguous matches using preferred label hierarchy
     all_found_synonyms = debug_info.get('subject_synonyms_found', []) + debug_info.get('object_synonyms_found', [])
@@ -363,14 +385,14 @@ def classify_edge(edge: Dict[str, Any],
         # 1. Multiple preferred labels -> ambiguous
         if len(preferred_entities) > 1:
             debug_info['reason'] = f'Multiple entities have "{synonym}" as preferred label'
-            return 'ambiguous', debug_info
+            return CLASSIFICATION_AMBIGUOUS, debug_info
         
         # 2. One preferred label -> that entity wins (check later if it matches input)
         # 3. No preferred, one regular -> good (check later if it matches input)  
         # 4. No preferred, multiple regular -> ambiguous
         if len(preferred_entities) == 0 and len(regular_synonyms) > 1:
             debug_info['reason'] = f'Multiple entities have "{synonym}" as regular synonym (no preferred label)'
-            return 'ambiguous', debug_info
+            return CLASSIFICATION_AMBIGUOUS, debug_info
     
     # If we get here, no ambiguity detected using preferred label hierarchy
     # Now check if the winning entities match the normalized input entities
@@ -388,7 +410,7 @@ def classify_edge(edge: Dict[str, Any],
             winning_entity = get_winning_entity_for_synonym(synonym, lookup_cache[synonym])
             if winning_entity and winning_entity.get('curie') != subject_normalized_id:
                 debug_info['reason'] = f'Subject synonym "{synonym}" resolves to {winning_entity.get("curie")} but expected {subject_normalized_id}'
-                return 'bad', debug_info
+                return CLASSIFICATION_UNRESOLVED, debug_info
     
     # Check object entity matches  
     for synonym in object_synonyms:
@@ -396,11 +418,11 @@ def classify_edge(edge: Dict[str, Any],
             winning_entity = get_winning_entity_for_synonym(synonym, lookup_cache[synonym])
             if winning_entity and winning_entity.get('curie') != object_normalized_id:
                 debug_info['reason'] = f'Object synonym "{synonym}" resolves to {winning_entity.get("curie")} but expected {object_normalized_id}'
-                return 'bad', debug_info
+                return CLASSIFICATION_UNRESOLVED, debug_info
     
     # If we get here, both entities found and resolve correctly
     debug_info['reason'] = 'Both entities found and resolve to expected normalized entities'
-    return 'good', debug_info
+    return CLASSIFICATION_PASSED, debug_info
 
 
 def create_output_files(output_dir: str) -> Dict[str, Any]:
@@ -417,9 +439,9 @@ def create_output_files(output_dir: str) -> Dict[str, Any]:
     output_path.mkdir(exist_ok=True)
     
     output_files = {
-        'good_edges': open(output_path / "good_edges.jsonl", 'w'),
-        'bad_edges': open(output_path / "bad_edges.jsonl", 'w'), 
-        'ambiguous_edges': open(output_path / "ambiguous_edges.jsonl", 'w')
+        CLASSIFICATION_PASSED: open(output_path / f"{CLASSIFICATION_FILE_MAPPING[CLASSIFICATION_PASSED]}.jsonl", 'w'),
+        CLASSIFICATION_UNRESOLVED: open(output_path / f"{CLASSIFICATION_FILE_MAPPING[CLASSIFICATION_UNRESOLVED]}.jsonl", 'w'), 
+        CLASSIFICATION_AMBIGUOUS: open(output_path / f"{CLASSIFICATION_FILE_MAPPING[CLASSIFICATION_AMBIGUOUS]}.jsonl", 'w')
     }
     
     return output_files
@@ -608,7 +630,7 @@ def stage4_classification_logic(edge: Dict[str, Any],
     """
     Stage 4: Classification Logic
     
-    Classify a single edge as good, bad, or ambiguous.
+    Classify a single edge as passed, unresolved, or ambiguous.
     This is the existing classify_edge function renamed for consistency.
     
     Args:
@@ -661,7 +683,8 @@ def run_streaming(edges_file: str, nodes_file: str, output_dir: str = "output",
     output_path = Path(output_dir)
     output_path.mkdir(exist_ok=True)
     
-    for filename in ["good_edges.jsonl", "bad_edges.jsonl", "ambiguous_edges.jsonl"]:
+    for classification in CLASSIFICATIONS:
+        filename = f"{CLASSIFICATION_FILE_MAPPING[classification]}.jsonl"
         filepath = output_path / filename
         if filepath.exists():
             filepath.unlink()
@@ -732,31 +755,31 @@ def run_streaming(edges_file: str, nodes_file: str, output_dir: str = "output",
     
     # Count results
     output_files_paths = {
-        'good_edges': output_path / "good_edges.jsonl",
-        'bad_edges': output_path / "bad_edges.jsonl",
-        'ambiguous_edges': output_path / "ambiguous_edges.jsonl"
+        CLASSIFICATION_PASSED: output_path / f"{CLASSIFICATION_FILE_MAPPING[CLASSIFICATION_PASSED]}.jsonl",
+        CLASSIFICATION_UNRESOLVED: output_path / f"{CLASSIFICATION_FILE_MAPPING[CLASSIFICATION_UNRESOLVED]}.jsonl",
+        CLASSIFICATION_AMBIGUOUS: output_path / f"{CLASSIFICATION_FILE_MAPPING[CLASSIFICATION_AMBIGUOUS]}.jsonl"
     }
     
     counts = {}
-    for category, filepath in output_files_paths.items():
+    for classification, filepath in output_files_paths.items():
         count = 0
         if filepath.exists():
             with open(filepath, 'r') as f:
                 for line in f:
                     if line.strip():
                         count += 1
-        counts[category.replace('_edges', '')] = count
+        counts[classification] = count
     
     print("\nClassification Summary:")
-    for category, count in counts.items():
+    for classification, count in counts.items():
         if count > 0:
-            print(f"{category.title()} edges: {count}")
+            print(f"{classification}: {count}")
     print(f"Total: {sum(counts.values())}")
     
     
     print(f"\nOutput files created:")
-    for category, filepath in output_files_paths.items():
-        print(f"{category.title().replace('_', ' ')}: {filepath}")
+    for classification, filepath in output_files_paths.items():
+        print(f"{classification}: {filepath}")
 
 
 def process_streaming_batch(batch_edges: List[Dict[str, Any]], nodes: Dict[str, Any], 
