@@ -1,0 +1,11 @@
+{
+  "lookup_cache": {
+    "DLK": [],
+    "delta like non-canonical Notch ligand 1": [],
+    "DLK1": [],
+    "FSH": [{
+      "curie": "NCBIGene:6046",
+      "label": "BRD2"
+    }]
+  }
+}

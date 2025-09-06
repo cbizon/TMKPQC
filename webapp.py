@@ -113,7 +113,7 @@ class EdgeReviewer:
 
 # Create Flask app
 app = Flask(__name__)
-reviewer = EdgeReviewer()
+reviewer = EdgeReviewer("output")
 
 
 @app.route('/')

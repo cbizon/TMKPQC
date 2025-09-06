@@ -1,0 +1,17 @@
+{
+  "lookup_cache": {
+    "DLK1": [],
+    "delta like non-canonical Notch ligand 1": [],
+    "FSH": [{
+      "curie": "NCBIGene:6046",
+      "label": "BRD2",
+      "highlighting": {},
+      "synonyms": ["FSH", "NAT", "BRD2", "RNF3", "RING3", "FSRG1", "FSHRG1", "D6S113E", "O27.1.1", "KIAA9001", "BRD2-IT1", "BRD2 gene", "BRD2 Gene", "bromodomain-containing 2", "bromodomain containing 2", "BRD2 intronic transcript 1", "really interesting new gene 3", "Bromodomain Containing 2 Gene", "BROMODOMAIN-CONTAINING PROTEIN 2", "bromodomain-containing protein 2", "really interesting new gene 3 protein", "female sterile homeotic-related gene 1", "female sterile homeotic related gene 1", "FEMALE STERILE HOMEOTIC-RELATED GENE 1, MOUSE, HOMOLOG OF", "BRD2 protein, human", "RING3 kinase, human", "RING3 protein, human", "nuclear kinase, 90 kDa, human", "bromodomain containing 2 protein, human", "Really Interesting New Gene 3 protein, human", "A0A1U9X7A8_HUMAN Bromodomain-containing protein 2 (trembl)", "E9PIQ3_HUMAN Bromodomain-containing protein 2 (trembl)", "hBRD2", "O27.1.1 (human)", "Bromodomain-Containing Protein 2", "Bromodomain Containing Protein 2", "Really Interesting New Gene 3 Protein", "bromodomain-containing protein 2 (human)", "BRD2_HUMAN Bromodomain-containing protein 2 (sprot)", "X5CF57_HUMAN Bromodomain-containing protein 2 (trembl)"],
+      "taxa": ["NCBITaxon:9606"],
+      "types": ["biolink:Gene", "biolink:GeneOrGeneProduct", "biolink:GenomicEntity", "biolink:ChemicalEntityOrGeneOrGeneProduct", "biolink:PhysicalEssence", "biolink:OntologyClass", "biolink:BiologicalEntity", "biolink:ThingWithTaxon", "biolink:NamedThing", "biolink:Entity", "biolink:PhysicalEssenceOrOccurrent", "biolink:MacromolecularMachineMixin", "biolink:Protein", "biolink:GeneProductMixin", "biolink:Polypeptide", "biolink:ChemicalEntityOrProteinOrPolypeptide"],
+      "score": 150.2549,
+      "clique_identifier_count": 25
+    }],
+    "DLK": []
+  }
+}
