@@ -149,11 +149,22 @@ def check_entity_in_text_with_cache(text: str, synonyms: List[str],
     lookup_data = {}
     
     for synonym in found_synonyms:
+        # First try to get raw results for display, otherwise use filtered results
+        raw_key = f'_raw_{synonym}'
+        if raw_key in lookup_cache and lookup_cache[raw_key]:
+            # Use raw results for webapp display
+            display_results = lookup_cache[raw_key]
+            lookup_data[synonym] = [format_lookup_result(result) for result in display_results[:5]]
+        elif synonym in lookup_cache:
+            # Fallback to filtered results
+            display_results = lookup_cache[synonym]
+            lookup_data[synonym] = [format_lookup_result(result) for result in display_results[:5]]
+        else:
+            lookup_data[synonym] = []
+            
+        # Check ambiguity using filtered results (for classification logic)
         if synonym in lookup_cache:
             lookup_results = lookup_cache[synonym]
-            lookup_data[synonym] = [format_lookup_result(result) for result in lookup_results[:5]]
-            
-            # Check if this synonym has multiple distinct matches (ambiguous)
             if len(lookup_results) > 1:
                 found_ambiguous.append(synonym)
     
@@ -550,6 +561,11 @@ def stage3_text_matching_and_lookup(edge: Dict[str, Any],
         else:
             # Fallback: lookup without filtering
             results = bulk_lookup_names([synonym], limit=20)
+        
+        # Store raw results first (for webapp debugging)
+        if synonym in results:
+            # Keep first 10 raw results for debugging
+            lookup_cache[f'_raw_{synonym}'] = results[synonym][:10]
         
         # Filter to only perfect matches (exact synonym match, case insensitive)
         if synonym in results:
