@@ -15,7 +15,7 @@ def test_stage1_fsh_edge_normalization():
     
     # Create test FSH edge
     edge = {
-        'subject': 'GTOPDB:4386',  # FSH receptor 
+        'subject': 'CHEBI:81569',  # FSH receptor 
         'object': 'UniProtKB:P80370',  # Some protein
         'sentences': 'FSH stimulation increased protein X expression.'
     }
@@ -31,17 +31,23 @@ def test_stage1_fsh_edge_normalization():
         
         # Verify collected entities
         assert len(entities) == 2
-        assert 'GTOPDB:4386' in entities
+        assert 'CHEBI:81569' in entities
         assert 'UniProtKB:P80370' in entities
         
         # Verify normalization results
-        assert 'GTOPDB:4386' in normalized_data
+        assert 'CHEBI:81569' in normalized_data
         assert 'UniProtKB:P80370' in normalized_data
         
-        # Test GTOPDB:4386 normalization
-        gtopdb_norm = normalized_data['GTOPDB:4386']
-        assert gtopdb_norm['id']['identifier'] == 'GTOPDB:4386'  # Should normalize to itself
-        assert gtopdb_norm['id']['label'] == 'FSH'  # Should have FSH label
+        # Test CHEBI normalization
+        gtopdb_norm = normalized_data['CHEBI:81569']
+        assert gtopdb_norm['id']['identifier'] == 'CHEBI:81569'  # Should normalize to itself
+        # Check if FSH appears as a label in any of the equivalent_identifiers
+        fsh_found = False
+        for equiv_id in gtopdb_norm['equivalent_identifiers']:
+            if equiv_id.get('label') == 'FSH':
+                fsh_found = True
+                break
+        assert fsh_found, "FSH label should be found in equivalent_identifiers"
         assert 'biolink:ChemicalEntity' in gtopdb_norm['type']  # Should be chemical type
         
         # Test UniProtKB:P80370 normalization  
@@ -49,10 +55,6 @@ def test_stage1_fsh_edge_normalization():
         assert uniprot_norm['id']['identifier'] == 'NCBIGene:8788'  # Should normalize to NCBIGene:8788
         assert uniprot_norm['id']['label'] == 'DLK1'  # Should have DLK1 label
         assert 'biolink:Gene' in uniprot_norm['type']  # Should be gene type
-        
-        print("✅ Stage 1 normalization results:")
-        print(f"   GTOPDB:4386 -> {gtopdb_norm['id']['identifier']} ({gtopdb_norm['id']['label']})")
-        print(f"   UniProtKB:P80370 -> {uniprot_norm['id']['identifier']} ({uniprot_norm['id']['label']})")
         
     finally:
         # Clean up

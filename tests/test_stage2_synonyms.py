@@ -12,8 +12,8 @@ def test_stage2_fsh_edge_synonyms():
     
     # Mock normalized_data from Stage 1 (what we expect from Stage 1 test)
     normalized_data = {
-        'GTOPDB:4386': {
-            'id': {'identifier': 'GTOPDB:4386', 'label': 'FSH'},
+        'CHEBI:81569': {
+            'id': {'identifier': 'CHEBI:81569', 'label': 'Follitropin'},
             'type': ['biolink:ChemicalEntity']
         },
         'UniProtKB:P80370': {
@@ -26,23 +26,22 @@ def test_stage2_fsh_edge_synonyms():
     synonyms_data = stage2_synonym_retrieval(normalized_data)
     
     # Verify synonym results for both entities
-    assert 'GTOPDB:4386' in synonyms_data
+    assert 'CHEBI:81569' in synonyms_data
     assert 'NCBIGene:8788' in synonyms_data
     
-    # Test GTOPDB:4386 synonyms
-    gtopdb_synonyms = synonyms_data['GTOPDB:4386']
-    assert gtopdb_synonyms['curie'] == 'GTOPDB:4386'
-    assert gtopdb_synonyms['preferred_name'] == 'FSH'
+    # Test CHEBI:81569 synonyms (FSH)
+    chebi_synonyms = synonyms_data['CHEBI:81569']
+    assert chebi_synonyms['curie'] == 'CHEBI:81569'
+    assert chebi_synonyms['preferred_name'] == 'Follitropin'
     
-    # Expected synonyms from curl result
-    expected_gtopdb_names = ['FSH', '4384', '4377']
-    actual_gtopdb_names = gtopdb_synonyms['names']
+    # Should have many synonyms (hundreds)
+    actual_chebi_names = chebi_synonyms['names']
+    assert len(actual_chebi_names) > 50, f"Expected many FSH synonyms, got {len(actual_chebi_names)}"
     
-    # Check that expected synonyms are present
-    for expected_name in expected_gtopdb_names:
-        assert expected_name in actual_gtopdb_names, f"Expected '{expected_name}' in GTOPDB:4386 synonyms"
+    # Check that FSH is in the list somewhere
+    assert 'FSH' in actual_chebi_names, "FSH should be in the CHEBI:81569 synonyms"
     
-    assert 'SmallMolecule' in gtopdb_synonyms['types'] or 'biolink:SmallMolecule' in gtopdb_synonyms['types']
+    assert 'SmallMolecule' in chebi_synonyms['types'] or 'biolink:SmallMolecule' in chebi_synonyms['types']
     
     # Test NCBIGene:8788 (DLK1) synonyms
     dlk1_synonyms = synonyms_data['NCBIGene:8788']
@@ -86,7 +85,7 @@ def test_stage2_fsh_edge_synonyms():
     assert 'Gene' in dlk1_synonyms['types'] or 'biolink:Gene' in dlk1_synonyms['types']
     
     print("✅ Stage 2 synonym retrieval results:")
-    print(f"   GTOPDB:4386 synonyms: {actual_gtopdb_names[:5]}...")
+    print(f"   CHEBI:81569 synonyms: {actual_chebi_names[:5]}...")
     print(f"   NCBIGene:8788 synonyms: {actual_dlk1_names[:5]}...")
 
 

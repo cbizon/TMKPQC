@@ -1,0 +1,31 @@
+{
+  "edge": {
+    "subject": "CHEBI:81569",
+    "predicate": "biolink:affects",
+    "object": "UniProtKB:P80370",
+    "primary_knowledge_source": "infores:text-mining-provider-targeted",
+    "publications": ["PMC:9308958", "PMC:9308958", "PMC:9308958"],
+    "biolink:tmkp_confidence_score": 0.9913376566666666,
+    "sentences": "In our invitro approach FSH furthermore directly upregulated expression of the non-canonical Notch ligand DLK1 establishing a link between FSH/FSHR and DLK1 that, to our knowledge, has not been reported previously.|NA|(D) FSH stimulation for 8?h on Day 8 of differentiation reduced FSHR expression and increased expression of Inhibin ? subunit (INHA), Steroidogenic Acute Regulatory Protein (StAR) and Delta Like Non-Canonical Notch Ligand (DLK1) in WT cells (black bars) but not in A189V mutant lines (light and dark gray bars).|NA|The expression of steroidogenic acute regulatory protein (StAR) and delta like non-canonical notch ligand 1 (DLK1) were also stimulated by FSH and forskolin (Fig.?1D) [FSH stimulations ANOVA, Bonferroni test, P (StAR, FSH 10?ng/ml) = 0.068, P (StAR, FSH 100?ng/ml) = 4.6E?05, P (DLK1, FSH 10?ng/ml) = 0.754, P (DLK1, FSH 100?ng/ml) = 0.002, forskolin t-test, adjusted P (StAR) = 1.34E?08,|NA",
+    "tmkp_ids": ["tmkp:91b3c883a4bfff31749e96cf07c54b645c8970e00b1e0d51375f3507326bd3b2", "tmkp:f412ff05026d6c987d53c91ff00142a953eaaea2206e691ddbb8840652675631", "tmkp:e830a6e9dd99c46741c73a3c5e65150e000385d3d2491851354aea613a213a82"],
+    "knowledge_level": "not_provided",
+    "agent_type": "text_mining_agent",
+    "qualified_predicate": "biolink:causes",
+    "object_aspect_qualifier": "activity_or_abundance",
+    "object_direction_qualifier": "increased"
+  },
+  "synonyms_data": {
+    "NCBIGene:8788": {
+      "curie": "NCBIGene:8788",
+      "preferred_name": "DLK1",
+      "names": ["DLK", "pG2", "ZOG", "FA1", "DLK1", "PREF1", "DLK-1", "Delta1", "Pref-1", "DLK1 Gene", "DLK1 gene", "secredeltin", "FETAL ANTIGEN 1", "fetal antigen 1", "delta-like 1 homolog", "PREADIPOCYTE FACTOR 1", "preadipocyte factor 1", "protein delta homolog 1", "delta-like homolog (Drosophila)", "delta-like 1 homolog (Drosophila)", "DELTA, DROSOPHILA, HOMOLOG-LIKE 1", "DELTA-LIKE NONCANONICAL NOTCH LIGAND 1", "Delta-Like 1 Homolog (Drosophila) Gene", "delta like non-canonical Notch ligand 1", "FA1 protein, human", "DLK1 protein, human", "Dll1 protein, human", "PREF1 protein, human", "Pref-1 protein, human", "hDLK1-A protein, human", "fetal antigen-1, human", "fetal antigen 1, human", "secredeltin protein, human", "delta-like 1 protein, human", "preadipocyte factor 1, human", "pre-adipocyte factor 1, human", "A8K019_HUMAN Protein delta homolog 1 (trembl)", "delta-like 1 homolog (Drosophila) protein, human", "hDLK1", "pG2 (human)", "DLK-1 (human)", "Protein Delta Homolog 1", "protein delta homolog 1 (human)", "DLK1_HUMAN Protein delta homolog 1 (sprot)"],
+      "types": ["Gene"]
+    },
+    "CHEBI:81569": {
+      "curie": "CHEBI:81569",
+      "preferred_name": "Follitropin",
+      "names": ["FSH", "3731", "3733", "fshs", "FSH-a", "FSH-b", "Bravelle", "Fertinex", "Metrodin", "FSH-beta", "Follitrin", "FSH alpha", "rFSH-alpha", "Follitropin", "FOLLITROPIN", "follitropin"],
+      "types": ["SmallMolecule"]
+    }
+  }
+}

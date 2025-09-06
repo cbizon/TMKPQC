@@ -191,6 +191,53 @@ def check_ambiguous_matches_with_cache(synonyms: List[str],
     return has_ambiguous, ambiguous_synonyms, lookup_results
 
 
+def get_winning_entity_for_synonym(synonym: str, lookup_results: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """
+    Get the winning entity for a synonym using preferred label hierarchy.
+    
+    Args:
+        synonym: The synonym to resolve
+        lookup_results: List of entities that match this synonym
+        
+    Returns:
+        The winning entity, or None if no results
+    """
+    if not lookup_results:
+        return None
+    
+    if len(lookup_results) == 1:
+        return lookup_results[0]
+    
+    # Separate entities by whether the synonym matches their preferred label
+    preferred_entities = []  # Entities where synonym == label
+    regular_synonyms = []    # Entities where synonym is in synonyms list only
+    
+    synonym_lower = synonym.lower()
+    for result in lookup_results:
+        result_label = result.get('label', '').lower()
+        
+        if result_label == synonym_lower:
+            preferred_entities.append(result)
+        else:
+            regular_synonyms.append(result)
+    
+    # Apply hierarchy rules:
+    # 1. Multiple preferred labels -> return None (ambiguous, should be handled upstream)
+    if len(preferred_entities) > 1:
+        return None
+    
+    # 2. One preferred label -> that entity wins
+    if len(preferred_entities) == 1:
+        return preferred_entities[0]
+    
+    # 3. No preferred, one regular -> that entity wins
+    if len(regular_synonyms) == 1:
+        return regular_synonyms[0]
+    
+    # 4. No preferred, multiple regular -> return None (ambiguous, should be handled upstream)
+    return None
+
+
 def classify_edge(edge: Dict[str, Any], 
                  lookup_cache: Dict[str, List[Dict[str, Any]]], 
                  normalized_data: Dict[str, Any],
@@ -265,21 +312,72 @@ def classify_edge(edge: Dict[str, Any],
         debug_info['reason'] = 'Object not found in text'
         return 'bad', debug_info
     
-    # Check for ambiguous matches
+    # Check for ambiguous matches using preferred label hierarchy
     all_found_synonyms = debug_info.get('subject_synonyms_found', []) + debug_info.get('object_synonyms_found', [])
     
-    has_ambiguous = False
+    # Check each found synonym for ambiguity using preferred label logic
     for synonym in all_found_synonyms:
-        if synonym in lookup_cache and len(lookup_cache[synonym]) > 1:
-            has_ambiguous = True
-            break
+        if synonym not in lookup_cache:
+            continue
+            
+        lookup_results = lookup_cache[synonym]
+        if len(lookup_results) <= 1:
+            continue  # No ambiguity with 0 or 1 result
+        
+        # Separate entities by whether the synonym matches their preferred label
+        preferred_entities = []  # Entities where synonym == label
+        regular_synonyms = []    # Entities where synonym is in synonyms list only
+        
+        for result in lookup_results:
+            result_label = result.get('label', '').lower()
+            synonym_lower = synonym.lower()
+            
+            if result_label == synonym_lower:
+                preferred_entities.append(result)
+            else:
+                regular_synonyms.append(result)
+        
+        # Apply hierarchy rules:
+        # 1. Multiple preferred labels -> ambiguous
+        if len(preferred_entities) > 1:
+            debug_info['reason'] = f'Multiple entities have "{synonym}" as preferred label'
+            return 'ambiguous', debug_info
+        
+        # 2. One preferred label -> that entity wins (check later if it matches input)
+        # 3. No preferred, one regular -> good (check later if it matches input)  
+        # 4. No preferred, multiple regular -> ambiguous
+        if len(preferred_entities) == 0 and len(regular_synonyms) > 1:
+            debug_info['reason'] = f'Multiple entities have "{synonym}" as regular synonym (no preferred label)'
+            return 'ambiguous', debug_info
     
-    if has_ambiguous:
-        debug_info['reason'] = 'Ambiguous entity matches found'
-        return 'ambiguous', debug_info
+    # If we get here, no ambiguity detected using preferred label hierarchy
+    # Now check if the winning entities match the normalized input entities
     
-    # If we get here, both entities found and no ambiguity
-    debug_info['reason'] = 'Both entities found unambiguously in text'
+    # Get winning entity for each found synonym and check against normalized input
+    subject_normalized_id = normalized_data.get(subject_entity, {}).get('id', {}).get('identifier', subject_entity)
+    object_normalized_id = normalized_data.get(object_entity, {}).get('id', {}).get('identifier', object_entity)
+    
+    subject_synonyms = debug_info.get('subject_synonyms_found', [])
+    object_synonyms = debug_info.get('object_synonyms_found', [])
+    
+    # Check subject entity matches
+    for synonym in subject_synonyms:
+        if synonym in lookup_cache:
+            winning_entity = get_winning_entity_for_synonym(synonym, lookup_cache[synonym])
+            if winning_entity and winning_entity.get('curie') != subject_normalized_id:
+                debug_info['reason'] = f'Subject synonym "{synonym}" resolves to {winning_entity.get("curie")} but expected {subject_normalized_id}'
+                return 'bad', debug_info
+    
+    # Check object entity matches  
+    for synonym in object_synonyms:
+        if synonym in lookup_cache:
+            winning_entity = get_winning_entity_for_synonym(synonym, lookup_cache[synonym])
+            if winning_entity and winning_entity.get('curie') != object_normalized_id:
+                debug_info['reason'] = f'Object synonym "{synonym}" resolves to {winning_entity.get("curie")} but expected {object_normalized_id}'
+                return 'bad', debug_info
+    
+    # If we get here, both entities found and resolve correctly
+    debug_info['reason'] = 'Both entities found and resolve to expected normalized entities'
     return 'good', debug_info
 
 
