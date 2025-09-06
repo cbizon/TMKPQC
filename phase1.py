@@ -827,6 +827,7 @@ def process_efficient_batch(batch_edges: List[Dict[str, Any]], nodes: Dict[str, 
                         'id': {'identifier': entity}, # Use original as normalized for testing
                         'equivalent_identifiers': [{'identifier': entity}]
                     }
+            # Filter batch_normalized_data but keep the full structure for processing
             batch_normalized_data = {k: v for k, v in global_normalized_cache.items() if k in new_entities and v is not None}
     
     # STAGE 2: Get synonyms for new preferred entities
@@ -960,7 +961,9 @@ def process_efficient_batch(batch_edges: List[Dict[str, Any]], nodes: Dict[str, 
         edge_synonyms_data = {}
         for entity_id in edge_entities:
             if entity_id in batch_entity_synonyms_map:
-                edge_synonyms_data[entity_id] = batch_entity_synonyms_map[entity_id]
+                # Use the preferred/normalized ID as the key, not the original entity ID
+                preferred_id = batch_entity_synonyms_map[entity_id]['preferred_id']
+                edge_synonyms_data[preferred_id] = batch_entity_synonyms_map[entity_id]
         
         # Classify the edge
         classification, debug_info = stage4_classification_logic(edge, batch_lookup_cache, 
