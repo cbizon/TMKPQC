@@ -138,10 +138,9 @@ def write_edge_result(edge: Dict[str, Any], classification: str, output_files: D
         result_edge['edge_id'] = str(uuid.uuid4())
     
     # Write to appropriate output file
-    output_key = f'{classification}_edges'
-    if output_key in output_files:
-        output_files[output_key].write(json.dumps(result_edge) + '\n')
-        output_files[output_key].flush()
+    if classification in output_files:
+        output_files[classification].write(json.dumps(result_edge) + '\n')
+        output_files[classification].flush()
 
 
 def check_entity_in_text_with_cache(text: str, synonyms: List[str], 
@@ -822,11 +821,13 @@ def process_efficient_batch(batch_edges: List[Dict[str, Any]], nodes: Dict[str, 
             print(f"Warning: API error during normalization: {e}")
             # Create mock normalized data to test the batching logic
             for entity in new_entities:
-                global_normalized_cache[entity] = {
-                    'id': {'identifier': entity}, # Use original as normalized for testing
-                    'equivalent_identifiers': [{'identifier': entity}]
-                }
-            batch_normalized_data = global_normalized_cache
+                # Only create mock data for valid entities, not None/empty
+                if entity:
+                    global_normalized_cache[entity] = {
+                        'id': {'identifier': entity}, # Use original as normalized for testing
+                        'equivalent_identifiers': [{'identifier': entity}]
+                    }
+            batch_normalized_data = {k: v for k, v in global_normalized_cache.items() if k in new_entities and v is not None}
     
     # STAGE 2: Get synonyms for new preferred entities
     new_preferred_entities = []
@@ -954,7 +955,7 @@ def process_efficient_batch(batch_edges: List[Dict[str, Any]], nodes: Dict[str, 
     for edge in batch_edges:
         # Create edge-specific data from caches
         edge_entities = [edge.get('subject'), edge.get('object')]
-        edge_normalized_data = {e: global_normalized_cache.get(e) for e in edge_entities if e in global_normalized_cache}
+        edge_normalized_data = {e: global_normalized_cache.get(e) for e in edge_entities if e in global_normalized_cache and global_normalized_cache.get(e) is not None}
         
         edge_synonyms_data = {}
         for entity_id in edge_entities:
