@@ -16,7 +16,7 @@ class APIException(Exception):
     pass
 
 
-def api_request_with_retry(func, *args, max_retries: int = 3, base_delay: float = 1.0, **kwargs):
+def api_request_with_retry(func, *args, max_retries: int = 5, base_delay: float = 2.0, **kwargs):
     """
     Execute an API request with exponential backoff retry logic.
     
@@ -262,15 +262,15 @@ def batch_get_synonyms(preferred_curies: List[str], batch_size: int = 500) -> Di
     return results
 
 
-def bulk_lookup_names(strings: List[str], 
-                     autocomplete: bool = False,
-                     highlighting: bool = False,
-                     offset: int = 0,
-                     limit: int = 10,
-                     biolink_types: Optional[List[str]] = None,
-                     only_prefixes: Optional[str] = None,
-                     exclude_prefixes: Optional[str] = None,
-                     only_taxa: Optional[str] = None) -> Dict[str, List[Dict[str, Any]]]:
+def _bulk_lookup_names_raw(strings: List[str], 
+                          autocomplete: bool = False,
+                          highlighting: bool = False,
+                          offset: int = 0,
+                          limit: int = 10,
+                          biolink_types: Optional[List[str]] = None,
+                          only_prefixes: Optional[str] = None,
+                          exclude_prefixes: Optional[str] = None,
+                          only_taxa: Optional[str] = None) -> Dict[str, List[Dict[str, Any]]]:
     """
     Look up multiple entities by name using the bulk lookup API.
     
@@ -318,6 +318,31 @@ def bulk_lookup_names(strings: List[str],
         raise APIException(f"Name resolver bulk lookup API request failed: {e}")
     except json.JSONDecodeError as e:
         raise APIException(f"Failed to parse bulk lookup API response: {e}")
+
+
+def bulk_lookup_names(strings: List[str], 
+                     autocomplete: bool = False,
+                     highlighting: bool = False,
+                     offset: int = 0,
+                     limit: int = 10,
+                     biolink_types: Optional[List[str]] = None,
+                     only_prefixes: Optional[str] = None,
+                     exclude_prefixes: Optional[str] = None,
+                     only_taxa: Optional[str] = None) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Look up multiple entities by name using the bulk lookup API with retry logic.
+    
+    This wrapper function applies exponential backoff retry to the bulk lookup API.
+    """
+    return api_request_with_retry(_bulk_lookup_names_raw, strings,
+                                 autocomplete=autocomplete,
+                                 highlighting=highlighting,
+                                 offset=offset,
+                                 limit=limit,
+                                 biolink_types=biolink_types,
+                                 only_prefixes=only_prefixes,
+                                 exclude_prefixes=exclude_prefixes,
+                                 only_taxa=only_taxa)
 
 
 def get_exact_matches(lookup_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
