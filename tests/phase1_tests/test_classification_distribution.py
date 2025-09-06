@@ -30,7 +30,7 @@ class TestClassificationDistribution:
                 'tmkp_edges.jsonl', 'tmkp_nodes.jsonl',
                 '--output', temp_dir,
                 '--max-edges', '50'
-            ], capture_output=True, text=True, cwd=Path(__file__).parent.parent)
+            ], capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent)
             
             # Should complete successfully
             assert result.returncode == 0, f"phase1.py failed: {result.stderr}"
@@ -84,7 +84,7 @@ class TestClassificationDistribution:
                 'tmkp_edges.jsonl', 'tmkp_nodes.jsonl', 
                 '--output', temp_dir,
                 '--max-edges', '10'
-            ], capture_output=True, text=True, cwd=Path(__file__).parent.parent)
+            ], capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent)
             
             assert result.returncode == 0, f"phase1.py failed: {result.stderr}"
             
@@ -125,7 +125,7 @@ class TestClassificationDistribution:
                 'tmkp_edges.jsonl', 'tmkp_nodes.jsonl',
                 '--output', temp_dir, 
                 '--max-edges', '5'
-            ], capture_output=True, text=True, cwd=Path(__file__).parent.parent)
+            ], capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent)
             
             assert result.returncode == 0, f"phase1.py failed: {result.stderr}"
             
@@ -176,7 +176,7 @@ class TestClassificationDistribution:
                 'tmkp_edges.jsonl', 'tmkp_nodes.jsonl',
                 '--output', temp_dir,
                 '--max-edges', '200'
-            ], capture_output=True, text=True, cwd=Path(__file__).parent.parent)
+            ], capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent)
             
             assert result.returncode == 0, f"phase1.py failed: {result.stderr}"
             
@@ -237,7 +237,7 @@ class TestClassificationDistribution:
                 'tmkp_edges.jsonl', 'tmkp_nodes.jsonl', 
                 '--output', temp_dir,
                 '--max-edges', '100'
-            ], capture_output=True, text=True, cwd=Path(__file__).parent.parent)
+            ], capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent)
             
             end_time = time.time()
             duration = end_time - start_time

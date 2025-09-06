@@ -7,12 +7,12 @@
     <div class="col-12">
         <h1>
             {{ classification.title() }} Edges
-            {% if classification == 'good' %}
-                <span class="badge bg-success classification-badge">Good</span>
-            {% elif classification == 'bad' %}
-                <span class="badge bg-danger classification-badge">Bad</span>
-            {% elif classification == 'ambiguous' %}
-                <span class="badge bg-warning text-dark classification-badge">Ambiguous</span>
+            {% if classification == 'passed phase 1' %}
+                <span class="badge bg-success classification-badge">Passed Phase 1</span>
+            {% elif classification == 'unresolved entity' %}
+                <span class="badge bg-danger classification-badge">Unresolved Entity</span>
+            {% elif classification == 'ambiguous entity resolution' %}
+                <span class="badge bg-warning text-dark classification-badge">Ambiguous Entity Resolution</span>
             {% endif %}
         </h1>
     </div>
@@ -22,17 +22,17 @@
 <!-- Edge Type Toggle -->
 <div class="mb-3">
     <div class="btn-group w-100" role="group" aria-label="Edge Type Navigation">
-        <a href="{{ url_for('view_edges', classification='good') }}" 
-           class="btn {% if classification == 'good' %}btn-success{% else %}btn-outline-success{% endif %}">
-            ✓ Good Edges
+        <a href="{{ url_for('view_edges', classification='passed phase 1') }}" 
+           class="btn {% if classification == 'passed phase 1' %}btn-success{% else %}btn-outline-success{% endif %}">
+            ✓ Passed Phase 1
         </a>
-        <a href="{{ url_for('view_edges', classification='bad') }}" 
-           class="btn {% if classification == 'bad' %}btn-danger{% else %}btn-outline-danger{% endif %}">
-            ✗ Bad Edges
+        <a href="{{ url_for('view_edges', classification='unresolved entity') }}" 
+           class="btn {% if classification == 'unresolved entity' %}btn-danger{% else %}btn-outline-danger{% endif %}">
+            ✗ Unresolved Entity
         </a>
-        <a href="{{ url_for('view_edges', classification='ambiguous') }}" 
-           class="btn {% if classification == 'ambiguous' %}btn-warning text-dark{% else %}btn-outline-warning{% endif %}">
-            ⚠ Ambiguous Edges
+        <a href="{{ url_for('view_edges', classification='ambiguous entity resolution') }}" 
+           class="btn {% if classification == 'ambiguous entity resolution' %}btn-warning text-dark{% else %}btn-outline-warning{% endif %}">
+            ⚠ Ambiguous Entity Resolution
         </a>
     </div>
 </div>
@@ -149,8 +149,8 @@
                 {% if edge.get('qc_classification') %}
                 <p><strong>QC Classification:</strong><br>
                 <span class="badge 
-                    {% if edge.qc_classification == 'good' %}bg-success
-                    {% elif edge.qc_classification == 'bad' %}bg-danger
+                    {% if edge.qc_classification == 'passed phase 1' %}bg-success
+                    {% elif edge.qc_classification == 'unresolved entity' %}bg-danger
                     {% else %}bg-warning text-dark{% endif %}">
                     {{ edge.qc_classification.title() }}
                 </span></p>
@@ -281,16 +281,16 @@ $(document).ready(function() {
                 }
                 e.preventDefault();
                 break;
-            case 71: // G key - Go to Good edges
-                window.location.href = "{{ url_for('view_edges', classification='good') }}";
+            case 71: // G key - Go to Passed Phase 1 edges
+                window.location.href = "{{ url_for('view_edges', classification='passed phase 1') }}";
                 e.preventDefault();
                 break;
-            case 66: // B key - Go to Bad edges
-                window.location.href = "{{ url_for('view_edges', classification='bad') }}";
+            case 66: // B key - Go to Unresolved Entity edges
+                window.location.href = "{{ url_for('view_edges', classification='unresolved entity') }}";
                 e.preventDefault();
                 break;
-            case 65: // A key - Go to Ambiguous edges
-                window.location.href = "{{ url_for('view_edges', classification='ambiguous') }}";
+            case 65: // A key - Go to Ambiguous Entity Resolution edges
+                window.location.href = "{{ url_for('view_edges', classification='ambiguous entity resolution') }}";
                 e.preventDefault();
                 break;
         }

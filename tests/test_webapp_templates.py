@@ -25,6 +25,28 @@ class TestWebappTemplates:
             undefined=pytest.importorskip("jinja2").StrictUndefined  # Make undefined variables raise errors
         )
         
+        # Add Flask-like globals that templates expect
+        def mock_url_for(endpoint, **values):
+            return f"/{endpoint}"
+        
+        def mock_format_entity_with_name(entity_id, entity_name=None):
+            return f"{entity_id} ({entity_name or 'Unknown'})"
+        
+        def mock_format_sentences(sentences):
+            return sentences
+            
+        def mock_highlight_synonyms(sentences, edge):
+            return sentences
+            
+        def mock_format_publications(publications):
+            return publications if publications else ""
+        
+        self.jinja_env.globals['url_for'] = mock_url_for
+        self.jinja_env.filters['format_entity_with_name'] = mock_format_entity_with_name
+        self.jinja_env.filters['format_sentences'] = mock_format_sentences
+        self.jinja_env.filters['highlight_synonyms'] = mock_highlight_synonyms
+        self.jinja_env.filters['format_publications'] = mock_format_publications
+        
         # Mock summary data structure that webapp.py produces
         self.mock_summary = {
             CLASSIFICATION_PASSED: 15,
@@ -176,7 +198,13 @@ class TestWebappTemplates:
             "subject": "CHEBI:123", 
             "object": "HGNC:456",
             "qc_classification": CLASSIFICATION_PASSED,
-            "sentences": "Test sentence"
+            "sentences": "Test sentence",
+            "subject_name": "Test Chemical",
+            "object_name": "Test Gene",
+            "predicate": "biolink:affects",
+            "publications": "PMID:12345",
+            "primary_knowledge_source": "test_source",
+            "agent_type": "test_agent"
         }
         
         mock_context = {
