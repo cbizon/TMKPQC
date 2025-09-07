@@ -328,21 +328,47 @@ def bulk_lookup_names(strings: List[str],
                      biolink_types: Optional[List[str]] = None,
                      only_prefixes: Optional[str] = None,
                      exclude_prefixes: Optional[str] = None,
-                     only_taxa: Optional[str] = None) -> Dict[str, List[Dict[str, Any]]]:
+                     only_taxa: Optional[str] = None,
+                     batch_size: int = 100) -> Dict[str, List[Dict[str, Any]]]:
     """
-    Look up multiple entities by name using the bulk lookup API with retry logic.
+    Look up multiple entities by name using the bulk lookup API with internal batching and retry logic.
     
-    This wrapper function applies exponential backoff retry to the bulk lookup API.
+    This function processes large lists of strings in manageable batches to avoid API timeouts.
+    Each batch is processed with exponential backoff retry logic.
+    
+    Args:
+        strings: List of entity names to lookup
+        batch_size: Size of each batch sent to API (default: 500)
+        (other args same as _bulk_lookup_names_raw)
+        
+    Returns:
+        Combined dictionary of all lookup results
     """
-    return api_request_with_retry(_bulk_lookup_names_raw, strings,
-                                 autocomplete=autocomplete,
-                                 highlighting=highlighting,
-                                 offset=offset,
-                                 limit=limit,
-                                 biolink_types=biolink_types,
-                                 only_prefixes=only_prefixes,
-                                 exclude_prefixes=exclude_prefixes,
-                                 only_taxa=only_taxa)
+    if not strings:
+        return {}
+    
+    results = {}
+    
+    for i in range(0, len(strings), batch_size):
+        batch = strings[i:i + batch_size]
+        print(f"Processing bulk lookup batch {i//batch_size + 1} of {(len(strings) + batch_size - 1)//batch_size} ({len(batch)} strings)")
+        
+        batch_results = api_request_with_retry(_bulk_lookup_names_raw, batch,
+                                             autocomplete=autocomplete,
+                                             highlighting=highlighting,
+                                             offset=offset,
+                                             limit=limit,
+                                             biolink_types=biolink_types,
+                                             only_prefixes=only_prefixes,
+                                             exclude_prefixes=exclude_prefixes,
+                                             only_taxa=only_taxa)
+        results.update(batch_results)
+        
+        # Small delay between batches to be respectful to the API
+        if i + batch_size < len(strings):
+            time.sleep(0.1)
+    
+    return results
 
 
 def get_exact_matches(lookup_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
