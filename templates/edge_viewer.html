@@ -341,7 +341,9 @@ $(document).ready(function() {
                         });
                         html += '</div>';
                         
-                        if (data.count > 1) {
+                        if (data.has_mismatch) {
+                            html += '<div class="alert alert-info mt-3"><strong>ℹ️ Entity Mismatch</strong> This synonym has an exact match to an entity label but resolves to a different entity than expected.</div>';
+                        } else if (data.count > 1) {
                             html += '<div class="alert alert-warning mt-3"><strong>⚠️ Multiple exact matches!</strong> This synonym is ambiguous and maps to different entities, which is why this edge is classified as ambiguous.</div>';
                         } else if (data.count === 1) {
                             html += '<div class="alert alert-success mt-3"><strong>✓ Single exact match</strong> This synonym is unambiguous.</div>';
