@@ -27,6 +27,28 @@ from api_functions import (
 )
 
 
+# ============================================================================
+# CLASSIFICATION CONSTANTS
+# ============================================================================
+
+CLASSIFICATION_PASSED = "passed phase 1"
+CLASSIFICATION_UNRESOLVED = "unresolved entity"
+CLASSIFICATION_AMBIGUOUS = "ambiguous entity resolution"
+
+CLASSIFICATIONS = {
+    CLASSIFICATION_PASSED,
+    CLASSIFICATION_UNRESOLVED,
+    CLASSIFICATION_AMBIGUOUS
+}
+
+# For backwards compatibility and file naming
+CLASSIFICATION_FILE_MAPPING = {
+    CLASSIFICATION_PASSED: "passed_phase_1",
+    CLASSIFICATION_UNRESOLVED: "unresolved_entity", 
+    CLASSIFICATION_AMBIGUOUS: "ambiguous_entity_resolution"
+}
+
+
 def find_synonyms_in_text(text: str, synonyms: List[str]) -> List[str]:
     """
     Find which synonyms appear in the given text.
@@ -86,7 +108,7 @@ def write_edge_result(edge: Dict[str, Any], classification: str, output_files: D
     
     Args:
         edge: Edge dictionary
-        classification: Classification result ('good', 'bad', 'ambiguous')
+        classification: Classification result (CLASSIFICATION_PASSED, CLASSIFICATION_UNRESOLVED, CLASSIFICATION_AMBIGUOUS)
         output_files: Dictionary with output file handles
         nodes: Node data for entity names
         debug_info: Optional debug information including found synonyms
@@ -116,10 +138,9 @@ def write_edge_result(edge: Dict[str, Any], classification: str, output_files: D
         result_edge['edge_id'] = str(uuid.uuid4())
     
     # Write to appropriate output file
-    output_key = f'{classification}_edges'
-    if output_key in output_files:
-        output_files[output_key].write(json.dumps(result_edge) + '\n')
-        output_files[output_key].flush()
+    if classification in output_files:
+        output_files[classification].write(json.dumps(result_edge) + '\n')
+        output_files[classification].flush()
 
 
 def check_entity_in_text_with_cache(text: str, synonyms: List[str], 
@@ -265,7 +286,7 @@ def classify_edge(edge: Dict[str, Any],
                  normalized_data: Dict[str, Any],
                  synonyms_data: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     """
-    Classify a single edge as good, bad, or ambiguous.
+    Classify a single edge as passed, unresolved, or ambiguous.
     
     Args:
         edge: Edge dictionary with subject, object, sentences
@@ -300,11 +321,11 @@ def classify_edge(edge: Dict[str, Any],
     # Check if we have synonyms for both entities (using normalized IDs)
     if subject_normalized_id not in synonyms_data:
         debug_info['reason'] = f'Missing synonyms for subject {subject_entity} (normalized: {subject_normalized_id})'
-        return 'bad', debug_info
+        return CLASSIFICATION_UNRESOLVED, debug_info
     
     if object_normalized_id not in synonyms_data:
         debug_info['reason'] = f'Missing synonyms for object {object_entity} (normalized: {object_normalized_id})'
-        return 'bad', debug_info
+        return CLASSIFICATION_UNRESOLVED, debug_info
     
     subject_synonyms = synonyms_data[subject_normalized_id].get('names', [])
     object_synonyms = synonyms_data[object_normalized_id].get('names', [])
@@ -315,7 +336,7 @@ def classify_edge(edge: Dict[str, Any],
     # Check for valid text
     if not text or text.strip() == '' or text.strip().upper() == 'NA':
         debug_info['reason'] = 'No supporting text available'
-        return 'bad', debug_info
+        return CLASSIFICATION_UNRESOLVED, debug_info
     
     # Check if both entities are found in text
     subject_found = check_entity_in_text_with_cache(
@@ -328,11 +349,11 @@ def classify_edge(edge: Dict[str, Any],
     # If either entity not found, classify as bad
     if not subject_found:
         debug_info['reason'] = 'Subject not found in text'
-        return 'bad', debug_info
+        return CLASSIFICATION_UNRESOLVED, debug_info
     
     if not object_found:
         debug_info['reason'] = 'Object not found in text'
-        return 'bad', debug_info
+        return CLASSIFICATION_UNRESOLVED, debug_info
     
     # Check for ambiguous matches using preferred label hierarchy
     all_found_synonyms = debug_info.get('subject_synonyms_found', []) + debug_info.get('object_synonyms_found', [])
@@ -363,14 +384,14 @@ def classify_edge(edge: Dict[str, Any],
         # 1. Multiple preferred labels -> ambiguous
         if len(preferred_entities) > 1:
             debug_info['reason'] = f'Multiple entities have "{synonym}" as preferred label'
-            return 'ambiguous', debug_info
+            return CLASSIFICATION_AMBIGUOUS, debug_info
         
         # 2. One preferred label -> that entity wins (check later if it matches input)
         # 3. No preferred, one regular -> good (check later if it matches input)  
         # 4. No preferred, multiple regular -> ambiguous
         if len(preferred_entities) == 0 and len(regular_synonyms) > 1:
             debug_info['reason'] = f'Multiple entities have "{synonym}" as regular synonym (no preferred label)'
-            return 'ambiguous', debug_info
+            return CLASSIFICATION_AMBIGUOUS, debug_info
     
     # If we get here, no ambiguity detected using preferred label hierarchy
     # Now check if the winning entities match the normalized input entities
@@ -388,7 +409,7 @@ def classify_edge(edge: Dict[str, Any],
             winning_entity = get_winning_entity_for_synonym(synonym, lookup_cache[synonym])
             if winning_entity and winning_entity.get('curie') != subject_normalized_id:
                 debug_info['reason'] = f'Subject synonym "{synonym}" resolves to {winning_entity.get("curie")} but expected {subject_normalized_id}'
-                return 'bad', debug_info
+                return CLASSIFICATION_UNRESOLVED, debug_info
     
     # Check object entity matches  
     for synonym in object_synonyms:
@@ -396,11 +417,11 @@ def classify_edge(edge: Dict[str, Any],
             winning_entity = get_winning_entity_for_synonym(synonym, lookup_cache[synonym])
             if winning_entity and winning_entity.get('curie') != object_normalized_id:
                 debug_info['reason'] = f'Object synonym "{synonym}" resolves to {winning_entity.get("curie")} but expected {object_normalized_id}'
-                return 'bad', debug_info
+                return CLASSIFICATION_UNRESOLVED, debug_info
     
     # If we get here, both entities found and resolve correctly
     debug_info['reason'] = 'Both entities found and resolve to expected normalized entities'
-    return 'good', debug_info
+    return CLASSIFICATION_PASSED, debug_info
 
 
 def create_output_files(output_dir: str) -> Dict[str, Any]:
@@ -417,9 +438,9 @@ def create_output_files(output_dir: str) -> Dict[str, Any]:
     output_path.mkdir(exist_ok=True)
     
     output_files = {
-        'good_edges': open(output_path / "good_edges.jsonl", 'w'),
-        'bad_edges': open(output_path / "bad_edges.jsonl", 'w'), 
-        'ambiguous_edges': open(output_path / "ambiguous_edges.jsonl", 'w')
+        CLASSIFICATION_PASSED: open(output_path / f"{CLASSIFICATION_FILE_MAPPING[CLASSIFICATION_PASSED]}.jsonl", 'w'),
+        CLASSIFICATION_UNRESOLVED: open(output_path / f"{CLASSIFICATION_FILE_MAPPING[CLASSIFICATION_UNRESOLVED]}.jsonl", 'w'), 
+        CLASSIFICATION_AMBIGUOUS: open(output_path / f"{CLASSIFICATION_FILE_MAPPING[CLASSIFICATION_AMBIGUOUS]}.jsonl", 'w')
     }
     
     return output_files
@@ -507,98 +528,121 @@ def stage2_synonym_retrieval(normalized_data: Dict[str, Any]) -> Dict[str, Any]:
     return synonyms_data
 
 
-def stage3_text_matching_and_lookup(edge: Dict[str, Any], 
-                                   synonyms_data: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+def stage3_text_matching_and_batch_lookup(batch_edges: List[Dict[str, Any]],
+                                         global_normalized_cache: Dict[str, Any],
+                                         global_synonyms_cache: Dict[str, Any]) -> Tuple[Dict[str, List[Dict[str, Any]]], Dict[str, Any]]:
     """
-    Stage 3: Text Matching & Lookup
+    Stage 3: Efficient Text Matching & Batch Lookup
     
-    Find which synonyms from Stage 2 appear in the edge text, then perform reverse lookups
-    on those found synonyms to prepare for ambiguity evaluation in Stage 4.
+    Find synonyms from Stage 2 that appear in batch edge texts, then perform efficient
+    bulk lookups grouped by entity type to prepare for Stage 4 classification.
     
     Args:
-        edge: Edge dictionary with subject, object, sentences
-        synonyms_data: Synonym data from stage 2
+        batch_edges: List of edge dictionaries with subject, object, sentences
+        global_normalized_cache: Cache of normalized entities from Stage 1
+        global_synonyms_cache: Cache of entity synonyms from Stage 2
         
     Returns:
-        Lookup cache dictionary mapping found synonyms to their lookup results
+        Tuple of (lookup_cache, batch_entity_synonyms_map) where:
+        - lookup_cache: Dictionary mapping found synonyms to their lookup results
+        - batch_entity_synonyms_map: Mapping of entity IDs to their synonym data
     """
     
-    # Get the supporting text
-    text = edge.get('sentences', '')
-    if not text or text.strip() in ['', 'NA']:
-        return {}
+    # Collect all synonyms needed for text matching in this batch
+    batch_text_synonyms = set()
+    batch_entity_synonyms_map = {}
     
-    # Find synonyms that appear in text
-    found_synonyms = set()
-    
-    # Check each entity's synonyms against the text
-    for entity_id, entity_synonyms in synonyms_data.items():
-        if 'names' in entity_synonyms:
-            for synonym in entity_synonyms['names']:
-                if synonym and synonym.strip() and synonym.lower() in text.lower():
-                    found_synonyms.add(synonym)
-    
-    if not found_synonyms:
-        return {}
-    
-    # Execute reverse lookups for found synonyms with proper filtering
-    lookup_cache = {}
-    
-    # Group synonyms by their entity types for proper biolink filtering
-    for synonym in found_synonyms:
-        # Find which entity this synonym belongs to 
-        entity_types = []
-        for entity_id, entity_synonyms in synonyms_data.items():
-            if 'names' in entity_synonyms and synonym in entity_synonyms['names']:
-                entity_types = entity_synonyms.get('types', [])
-                break
-        
-        # Determine biolink type and taxon filtering
-        biolink_types = []
-        only_taxa = []
-        
-        # Map entity types to biolink types for lookup
-        biolink_types.append(entity_types[0])
-        if entity_types[0] == 'Gene':
-            only_taxa.append('NCBITaxon:9606')  # Human taxon for genes
-        
-        # Execute lookup with proper filtering
-        if biolink_types:
-            only_taxa_str = ','.join(only_taxa) if only_taxa else ""
-            results = bulk_lookup_names([synonym], 
-                                      biolink_types=biolink_types,
-                                      only_taxa=only_taxa_str,
-                                      limit=20)
-        else:
-            # Fallback: lookup without filtering
-            results = bulk_lookup_names([synonym], limit=20)
-        
-        # Store raw results first (for webapp debugging)
-        if synonym in results:
-            # Keep first 10 raw results for debugging
-            lookup_cache[f'_raw_{synonym}'] = results[synonym][:10]
-        
-        # Filter to only perfect matches (exact synonym match, case insensitive)
-        if synonym in results:
-            perfect_matches = []
-            for result in results[synonym]:
-                synonyms_list = result.get('synonyms', [])
-                label = result.get('label', '')
-                
-                # Check if synonym appears exactly in synonyms list or as label (case insensitive)
-                has_exact_match = (
-                    synonym in synonyms_list or 
-                    synonym.upper() in [s.upper() for s in synonyms_list] or
-                    synonym.upper() == label.upper()
-                )
-                
-                if has_exact_match:
-                    perfect_matches.append(result)
+    for edge in batch_edges:
+        text = edge.get('sentences', '')
+        if not text or text.strip() in ['', 'NA']:
+            continue
             
-            lookup_cache[synonym] = perfect_matches
+        # Collect synonyms for subject and object entities
+        for entity_role in ['subject', 'object']:
+            entity_id = edge.get(entity_role)
+            if entity_id in global_normalized_cache and global_normalized_cache[entity_id]:
+                preferred_id = global_normalized_cache[entity_id]['id']['identifier']
+                if preferred_id in global_synonyms_cache and 'names' in global_synonyms_cache[preferred_id]:
+                    entity_synonyms = global_synonyms_cache[preferred_id]['names']
+                    batch_entity_synonyms_map[entity_id] = {
+                        'names': entity_synonyms,
+                        'types': global_synonyms_cache[preferred_id].get('types', []),
+                        'preferred_id': preferred_id
+                    }
+                    
+                    # Find synonyms that appear in this edge's text
+                    for synonym in entity_synonyms:
+                        if synonym and synonym.strip() and synonym.lower() in text.lower():
+                            batch_text_synonyms.add(synonym)
+
+    # Execute bulk lookups for all synonyms found in batch texts
+    batch_lookup_cache = {}
+    if batch_text_synonyms:
+        synonyms_list = list(batch_text_synonyms)
+        
+        # Group synonyms by entity type for efficient lookups
+        type_grouped_synonyms = defaultdict(list)
+        
+        for synonym in synonyms_list:
+            # Find which entity this synonym belongs to and get its type
+            entity_types = []
+            for entity_id, entity_data in batch_entity_synonyms_map.items():
+                if synonym in entity_data['names']:
+                    entity_types = entity_data.get('types', [])
+                    break
+            
+            if entity_types:
+                type_key = entity_types[0] if entity_types else 'unknown'
+            else:
+                type_key = 'unknown'
+            
+            type_grouped_synonyms[type_key].append(synonym)
+        
+        # Execute bulk lookups grouped by type for efficiency
+        for entity_type, type_synonyms in type_grouped_synonyms.items():
+            biolink_types = [entity_type] if entity_type != 'unknown' else []
+            only_taxa = ['NCBITaxon:9606'] if entity_type == 'Gene' else []
+            only_taxa_str = ','.join(only_taxa) if only_taxa else ""
+            
+            try:
+                if biolink_types:
+                    results = bulk_lookup_names(type_synonyms, 
+                                              biolink_types=biolink_types,
+                                              only_taxa=only_taxa_str,
+                                              limit=20)
+                else:
+                    results = bulk_lookup_names(type_synonyms, limit=20)
+            except Exception as e:
+                print(f"CRITICAL: API error during lookup for {entity_type}: {e}")
+                print(f"After multiple retries with exponential backoff, the APIs are unavailable.")
+                print(f"Stopping process to avoid generating incorrect classifications.")
+                print(f"Partial results have been saved to the output directory.")
+                raise SystemExit(f"Process stopped due to API failures: {e}")
+            
+            # Store results and apply perfect matching filter
+            for synonym in type_synonyms:
+                if synonym in results:
+                    # Store raw results for webapp debugging
+                    batch_lookup_cache[f'_raw_{synonym}'] = results[synonym][:10]
+                    
+                    # Apply perfect match filtering
+                    perfect_matches = []
+                    for result in results[synonym]:
+                        synonyms_list_result = result.get('synonyms', [])
+                        label = result.get('label', '')
+                        
+                        has_exact_match = (
+                            synonym in synonyms_list_result or 
+                            synonym.upper() in [s.upper() for s in synonyms_list_result] or
+                            synonym.upper() == label.upper()
+                        )
+                        
+                        if has_exact_match:
+                            perfect_matches.append(result)
+                    
+                    batch_lookup_cache[synonym] = perfect_matches
     
-    
-    return lookup_cache
+    return batch_lookup_cache, batch_entity_synonyms_map
 
 
 def stage4_classification_logic(edge: Dict[str, Any], 
@@ -608,7 +652,7 @@ def stage4_classification_logic(edge: Dict[str, Any],
     """
     Stage 4: Classification Logic
     
-    Classify a single edge as good, bad, or ambiguous.
+    Classify a single edge as passed, unresolved, or ambiguous.
     This is the existing classify_edge function renamed for consistency.
     
     Args:
@@ -661,7 +705,8 @@ def run_streaming(edges_file: str, nodes_file: str, output_dir: str = "output",
     output_path = Path(output_dir)
     output_path.mkdir(exist_ok=True)
     
-    for filename in ["good_edges.jsonl", "bad_edges.jsonl", "ambiguous_edges.jsonl"]:
+    for classification in CLASSIFICATIONS:
+        filename = f"{CLASSIFICATION_FILE_MAPPING[classification]}.jsonl"
         filepath = output_path / filename
         if filepath.exists():
             filepath.unlink()
@@ -732,47 +777,33 @@ def run_streaming(edges_file: str, nodes_file: str, output_dir: str = "output",
     
     # Count results
     output_files_paths = {
-        'good_edges': output_path / "good_edges.jsonl",
-        'bad_edges': output_path / "bad_edges.jsonl",
-        'ambiguous_edges': output_path / "ambiguous_edges.jsonl"
+        CLASSIFICATION_PASSED: output_path / f"{CLASSIFICATION_FILE_MAPPING[CLASSIFICATION_PASSED]}.jsonl",
+        CLASSIFICATION_UNRESOLVED: output_path / f"{CLASSIFICATION_FILE_MAPPING[CLASSIFICATION_UNRESOLVED]}.jsonl",
+        CLASSIFICATION_AMBIGUOUS: output_path / f"{CLASSIFICATION_FILE_MAPPING[CLASSIFICATION_AMBIGUOUS]}.jsonl"
     }
     
     counts = {}
-    for category, filepath in output_files_paths.items():
+    for classification, filepath in output_files_paths.items():
         count = 0
         if filepath.exists():
             with open(filepath, 'r') as f:
                 for line in f:
                     if line.strip():
                         count += 1
-        counts[category.replace('_edges', '')] = count
+        counts[classification] = count
     
     print("\nClassification Summary:")
-    for category, count in counts.items():
+    for classification, count in counts.items():
         if count > 0:
-            print(f"{category.title()} edges: {count}")
+            print(f"{classification}: {count}")
     print(f"Total: {sum(counts.values())}")
     
     
     print(f"\nOutput files created:")
-    for category, filepath in output_files_paths.items():
-        print(f"{category.title().replace('_', ' ')}: {filepath}")
+    for classification, filepath in output_files_paths.items():
+        print(f"{classification}: {filepath}")
 
 
-def process_streaming_batch(batch_edges: List[Dict[str, Any]], nodes: Dict[str, Any], 
-                          normalized_data: Dict[str, Any], synonyms_data: Dict[str, Any],
-                          output_files: Dict[str, Any]) -> None:
-    """Process a batch of edges using the validated 4-stage pipeline (deprecated - use process_efficient_batch)."""
-    
-    # Process each edge through Stage 3 and Stage 4
-    for i, edge in enumerate(batch_edges):
-        # Stage 3: Text matching and lookup
-        lookup_cache = stage3_text_matching_and_lookup(edge, synonyms_data)
-        
-        # Stage 4: Classification
-        classification, debug_info = stage4_classification_logic(edge, lookup_cache, normalized_data, synonyms_data)
-        
-        write_edge_result(edge, classification, output_files, nodes, debug_info)
 
 
 def process_efficient_batch(batch_edges: List[Dict[str, Any]], nodes: Dict[str, Any],
@@ -799,11 +830,14 @@ def process_efficient_batch(batch_edges: List[Dict[str, Any]], nodes: Dict[str, 
             print(f"Warning: API error during normalization: {e}")
             # Create mock normalized data to test the batching logic
             for entity in new_entities:
-                global_normalized_cache[entity] = {
-                    'id': {'identifier': entity}, # Use original as normalized for testing
-                    'equivalent_identifiers': [{'identifier': entity}]
-                }
-            batch_normalized_data = global_normalized_cache
+                # Only create mock data for valid entities, not None/empty
+                if entity:
+                    global_normalized_cache[entity] = {
+                        'id': {'identifier': entity}, # Use original as normalized for testing
+                        'equivalent_identifiers': [{'identifier': entity}]
+                    }
+            # Filter batch_normalized_data but keep the full structure for processing
+            batch_normalized_data = {k: v for k, v in global_normalized_cache.items() if k in new_entities and v is not None}
     
     # STAGE 2: Get synonyms for new preferred entities
     new_preferred_entities = []
@@ -827,116 +861,22 @@ def process_efficient_batch(batch_edges: List[Dict[str, Any]], nodes: Dict[str, 
                     'types': ['SmallMolecule']  # Default type for testing
                 }
     
-    # STAGE 3: Collect all synonyms needed for text matching in this batch
-    batch_text_synonyms = set()
-    batch_entity_synonyms_map = {}
-    
-    for edge in batch_edges:
-        text = edge.get('sentences', '')
-        if not text or text.strip() in ['', 'NA']:
-            continue
-            
-        # Collect synonyms for subject and object entities
-        for entity_role in ['subject', 'object']:
-            entity_id = edge.get(entity_role)
-            if entity_id in global_normalized_cache and global_normalized_cache[entity_id]:
-                preferred_id = global_normalized_cache[entity_id]['id']['identifier']
-                if preferred_id in global_synonyms_cache and 'names' in global_synonyms_cache[preferred_id]:
-                    entity_synonyms = global_synonyms_cache[preferred_id]['names']
-                    batch_entity_synonyms_map[entity_id] = {
-                        'names': entity_synonyms,
-                        'types': global_synonyms_cache[preferred_id].get('types', []),
-                        'preferred_id': preferred_id
-                    }
-                    
-                    # Find synonyms that appear in this edge's text
-                    for synonym in entity_synonyms:
-                        if synonym and synonym.strip() and synonym.lower() in text.lower():
-                            batch_text_synonyms.add(synonym)
-    
-    # STAGE 3: Execute bulk lookups for all synonyms found in batch texts (single API call)
-    batch_lookup_cache = {}
-    if batch_text_synonyms:
-        synonyms_list = list(batch_text_synonyms)
-        
-        # Group synonyms by entity type for efficient lookups
-        type_grouped_synonyms = defaultdict(list)
-        
-        for synonym in synonyms_list:
-            # Find which entity this synonym belongs to and get its type
-            entity_types = []
-            for entity_id, entity_data in batch_entity_synonyms_map.items():
-                if synonym in entity_data['names']:
-                    entity_types = entity_data.get('types', [])
-                    break
-            
-            if entity_types:
-                type_key = entity_types[0] if entity_types else 'unknown'
-            else:
-                type_key = 'unknown'
-            
-            type_grouped_synonyms[type_key].append(synonym)
-        
-        # Execute bulk lookups grouped by type for efficiency
-        for entity_type, type_synonyms in type_grouped_synonyms.items():
-            biolink_types = [entity_type] if entity_type != 'unknown' else []
-            only_taxa = ['NCBITaxon:9606'] if entity_type == 'Gene' else []
-            only_taxa_str = ','.join(only_taxa) if only_taxa else ""
-            
-            try:
-                if biolink_types:
-                    results = bulk_lookup_names(type_synonyms, 
-                                              biolink_types=biolink_types,
-                                              only_taxa=only_taxa_str,
-                                              limit=20)
-                else:
-                    results = bulk_lookup_names(type_synonyms, limit=20)
-            except Exception as e:
-                print(f"Warning: API error during lookup for {entity_type}: {e}")
-                # Create mock results to test the batching logic
-                results = {}
-                for synonym in type_synonyms:
-                    results[synonym] = [{
-                        'curie': f'MOCK:{synonym.upper()}',
-                        'label': synonym,
-                        'synonyms': [synonym],
-                        'types': [entity_type] if entity_type != 'unknown' else ['SmallMolecule'],
-                        'score': 1.0
-                    }]
-            
-            # Store results and apply perfect matching filter
-            for synonym in type_synonyms:
-                if synonym in results:
-                    # Store raw results for webapp debugging
-                    batch_lookup_cache[f'_raw_{synonym}'] = results[synonym][:10]
-                    
-                    # Apply perfect match filtering
-                    perfect_matches = []
-                    for result in results[synonym]:
-                        synonyms_list_result = result.get('synonyms', [])
-                        label = result.get('label', '')
-                        
-                        has_exact_match = (
-                            synonym in synonyms_list_result or 
-                            synonym.upper() in [s.upper() for s in synonyms_list_result] or
-                            synonym.upper() == label.upper()
-                        )
-                        
-                        if has_exact_match:
-                            perfect_matches.append(result)
-                    
-                    batch_lookup_cache[synonym] = perfect_matches
+    # STAGE 3: Text matching and batch lookup
+    batch_lookup_cache, batch_entity_synonyms_map = stage3_text_matching_and_batch_lookup(
+        batch_edges, global_normalized_cache, global_synonyms_cache)
     
     # STAGE 4: Process each edge with cached data
     for edge in batch_edges:
         # Create edge-specific data from caches
         edge_entities = [edge.get('subject'), edge.get('object')]
-        edge_normalized_data = {e: global_normalized_cache.get(e) for e in edge_entities if e in global_normalized_cache}
+        edge_normalized_data = {e: global_normalized_cache.get(e) for e in edge_entities if e in global_normalized_cache and global_normalized_cache.get(e) is not None}
         
         edge_synonyms_data = {}
         for entity_id in edge_entities:
             if entity_id in batch_entity_synonyms_map:
-                edge_synonyms_data[entity_id] = batch_entity_synonyms_map[entity_id]
+                # Use the preferred/normalized ID as the key, not the original entity ID
+                preferred_id = batch_entity_synonyms_map[entity_id]['preferred_id']
+                edge_synonyms_data[preferred_id] = batch_entity_synonyms_map[entity_id]
         
         # Classify the edge
         classification, debug_info = stage4_classification_logic(edge, batch_lookup_cache, 

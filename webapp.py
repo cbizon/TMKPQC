@@ -2,7 +2,7 @@
 Flask web application for reviewing classified edges.
 
 This webapp allows human reviewers to examine edges that have been classified
-by the Phase 1 system as good, bad, or ambiguous.
+by the Phase 1 system as passed, unresolved, or ambiguous entity resolution.
 """
 
 import json
@@ -13,6 +13,8 @@ from typing import List, Dict, Any, Optional
 
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 
+from phase1 import CLASSIFICATION_PASSED, CLASSIFICATION_UNRESOLVED, CLASSIFICATION_AMBIGUOUS, CLASSIFICATION_FILE_MAPPING
+
 
 class EdgeReviewer:
     """Class to handle loading and managing classified edges."""
@@ -20,14 +22,14 @@ class EdgeReviewer:
     def __init__(self, output_dir: str = "output"):
         self.output_dir = Path(output_dir)
         self.edges = {
-            'good': [],
-            'bad': [],
-            'ambiguous': []
+            CLASSIFICATION_PASSED: [],
+            CLASSIFICATION_UNRESOLVED: [],
+            CLASSIFICATION_AMBIGUOUS: []
         }
         self.current_indices = {
-            'good': 0,
-            'bad': 0,
-            'ambiguous': 0
+            CLASSIFICATION_PASSED: 0,
+            CLASSIFICATION_UNRESOLVED: 0,
+            CLASSIFICATION_AMBIGUOUS: 0
         }
         self.load_all_edges()
     
@@ -53,13 +55,13 @@ class EdgeReviewer:
         """Load all classified edges from output files."""
         print("Loading classified edges...")
         
-        self.edges['good'] = self.load_edges_from_file("good_edges.jsonl")
-        self.edges['bad'] = self.load_edges_from_file("bad_edges.jsonl")
-        self.edges['ambiguous'] = self.load_edges_from_file("ambiguous_edges.jsonl")
+        self.edges[CLASSIFICATION_PASSED] = self.load_edges_from_file(f"{CLASSIFICATION_FILE_MAPPING[CLASSIFICATION_PASSED]}.jsonl")
+        self.edges[CLASSIFICATION_UNRESOLVED] = self.load_edges_from_file(f"{CLASSIFICATION_FILE_MAPPING[CLASSIFICATION_UNRESOLVED]}.jsonl")
+        self.edges[CLASSIFICATION_AMBIGUOUS] = self.load_edges_from_file(f"{CLASSIFICATION_FILE_MAPPING[CLASSIFICATION_AMBIGUOUS]}.jsonl")
         
-        print(f"Loaded edges - Good: {len(self.edges['good'])}, "
-              f"Bad: {len(self.edges['bad'])}, "
-              f"Ambiguous: {len(self.edges['ambiguous'])}")
+        print(f"Loaded edges - {CLASSIFICATION_PASSED}: {len(self.edges[CLASSIFICATION_PASSED])}, "
+              f"{CLASSIFICATION_UNRESOLVED}: {len(self.edges[CLASSIFICATION_UNRESOLVED])}, "
+              f"{CLASSIFICATION_AMBIGUOUS}: {len(self.edges[CLASSIFICATION_AMBIGUOUS])}")
     
     def get_edge_count(self, classification: str) -> int:
         """Get count of edges for a classification."""
@@ -104,9 +106,9 @@ class EdgeReviewer:
     def get_edge_summary(self) -> Dict[str, int]:
         """Get summary of edge counts."""
         return {
-            'good': len(self.edges['good']),
-            'bad': len(self.edges['bad']),
-            'ambiguous': len(self.edges['ambiguous']),
+            CLASSIFICATION_PASSED: len(self.edges[CLASSIFICATION_PASSED]),
+            CLASSIFICATION_UNRESOLVED: len(self.edges[CLASSIFICATION_UNRESOLVED]),
+            CLASSIFICATION_AMBIGUOUS: len(self.edges[CLASSIFICATION_AMBIGUOUS]),
             'total': sum(len(edges) for edges in self.edges.values())
         }
 
@@ -127,7 +129,7 @@ def index():
 @app.route('/edges/<classification>/<int:index>')
 def view_edges(classification: str, index: int = None):
     """View edges by classification."""
-    if classification not in ['good', 'bad', 'ambiguous']:
+    if classification not in [CLASSIFICATION_PASSED, CLASSIFICATION_UNRESOLVED, CLASSIFICATION_AMBIGUOUS]:
         return redirect(url_for('index'))
     
     # Set index if provided
@@ -155,7 +157,7 @@ def view_edges(classification: str, index: int = None):
 @app.route('/api/edges/<classification>/navigate', methods=['POST'])
 def navigate_edge(classification: str):
     """API endpoint for edge navigation."""
-    if classification not in ['good', 'bad', 'ambiguous']:
+    if classification not in [CLASSIFICATION_PASSED, CLASSIFICATION_UNRESOLVED, CLASSIFICATION_AMBIGUOUS]:
         return jsonify({'error': 'Invalid classification'}), 400
     
     action = request.json.get('action')
@@ -192,18 +194,31 @@ def reload_edges():
 def lookup_synonym(classification: str, index: int, entity_type: str, query: str):
     """API endpoint to get stored lookup results for a synonym from edge data."""
     try:
+        # Convert URL classification to internal classification 
+        # URL uses underscores, internal uses spaces
+        classification_mapping = {
+            'passed_phase_1': CLASSIFICATION_PASSED,
+            'unresolved_entity': CLASSIFICATION_UNRESOLVED,
+            'ambiguous_entity_resolution': CLASSIFICATION_AMBIGUOUS
+        }
+        internal_classification = classification_mapping.get(classification, classification)
+        
         # Get the specific edge
-        edge = reviewer.get_edge_by_index(classification, index)
+        edge = reviewer.get_edge_by_index(internal_classification, index)
         if not edge:
             return jsonify({'success': False, 'error': 'Edge not found'}), 404
         
         # Get the lookup data from the edge's debug info
         debug_info = edge.get('qc_debug', {})
+        reason = debug_info.get('reason', '')
+        # Use the classification parameter from the URL, not from the edge data
         
         if entity_type == 'subject':
             lookup_data = debug_info.get('subject_lookup_data', {})
+            expected_curie = edge.get('subject')
         elif entity_type == 'object':
             lookup_data = debug_info.get('object_lookup_data', {})
+            expected_curie = edge.get('object')
         else:
             return jsonify({'success': False, 'error': 'Invalid entity type'}), 400
         
@@ -222,13 +237,35 @@ def lookup_synonym(classification: str, index: int, entity_type: str, query: str
         # Sort by score descending
         results = sorted(all_results, key=lambda x: x['score'], reverse=True)
         
+        # Determine the explanation based on mismatch vs ambiguity
+        # Check for the query in any case variation within the reason
+        has_mismatch = (f'{entity_type.capitalize()} synonym' in reason and 
+                       'resolves to' in reason and 'but expected' in reason and 
+                       (f'"{query}"' in reason or f'"{query.capitalize()}"' in reason or 
+                        f'"{query.upper()}"' in reason or f'"{query.lower()}"' in reason))
+        
+        if has_mismatch:
+            # This is a mismatch case - synonym found but resolves to wrong entity
+            # Find the actual resolved entity from results (highest score)
+            top_result = results[0] if results else None
+            actual_curie = top_result['curie'] if top_result else 'unknown'
+            note = f'"{query}" has exact match to entity label but resolves to {actual_curie} instead of expected {expected_curie}'
+        elif len(results) > 1:
+            # This is an ambiguity case - multiple possible matches
+            note = f'"{query}" has multiple exact matches to entity labels, causing ambiguity'
+        else:
+            # Default case
+            note = f'Showing all exact matches for {entity_type} entity (clicked synonym: "{query}")'
+        
         return jsonify({
             'success': True, 
             'query': query,
             'entity_type': entity_type,
             'count': len(results),
             'results': results,
-            'note': f'Showing all exact matches for {entity_type} entity (clicked synonym: "{query}")'
+            'note': note,
+            'expected_curie': expected_curie,
+            'has_mismatch': has_mismatch
         })
         
     except Exception as e:
@@ -308,7 +345,7 @@ def format_entity_with_name(curie, name=None):
 
 @app.template_filter('highlight_synonyms')
 def highlight_synonyms(text, edge=None):
-    """Highlight found synonyms in text."""
+    """Highlight found synonyms in text with different styling based on match status."""
     if not text or not edge:
         return text
     
@@ -316,29 +353,60 @@ def highlight_synonyms(text, edge=None):
     debug_info = edge.get('qc_debug', {})
     subject_synonyms = debug_info.get('subject_synonyms_found', [])
     object_synonyms = debug_info.get('object_synonyms_found', [])
+    reason = debug_info.get('reason', '')
+    classification = edge.get('classification', '')
     
     highlighted_text = text
     
-    # Highlight subject synonyms in blue
+    # Determine if we have entity resolution mismatches
+    has_subject_mismatch = 'Subject synonym' in reason and 'resolves to' in reason and 'but expected' in reason
+    has_object_mismatch = 'Object synonym' in reason and 'resolves to' in reason and 'but expected' in reason
+    is_unresolved = classification == 'unresolved entity'
+    
+    # Highlight subject synonyms
     for synonym in subject_synonyms:
         if synonym:
-            # Use case-insensitive word boundary replacement
             pattern = r'\b' + re.escape(synonym) + r'\b'
+            
+            # Check if this specific synonym is mentioned in a mismatch reason
+            synonym_is_mismatched = has_subject_mismatch and f'"{synonym}"' in reason
+            
+            if synonym_is_mismatched:
+                # Mismatched synonym: border only, no background color
+                style = "border: 2px solid #0066cc; padding: 1px 3px; border-radius: 3px; font-weight: bold; cursor: pointer; background-color: transparent;"
+                title = f"Subject: {synonym} (has exact match to entity label but resolves to different entity - click to lookup)"
+            else:
+                # Matched synonym: full blue background
+                style = "background-color: #cce5ff; padding: 1px 3px; border-radius: 3px; font-weight: bold; cursor: pointer;"
+                title = f"Subject: {synonym} (click to lookup)"
+            
             highlighted_text = re.sub(
                 pattern, 
-                f'<span class="synonym-highlight subject-synonym" style="background-color: #cce5ff; padding: 1px 3px; border-radius: 3px; font-weight: bold; cursor: pointer;" title="Subject: {synonym} (click to lookup)">\\g<0></span>',
+                f'<span class="synonym-highlight subject-synonym" style="{style}" title="{title}">\\g<0></span>',
                 highlighted_text,
                 flags=re.IGNORECASE
             )
     
-    # Highlight object synonyms in red
+    # Highlight object synonyms  
     for synonym in object_synonyms:
         if synonym:
-            # Use case-insensitive word boundary replacement
             pattern = r'\b' + re.escape(synonym) + r'\b'
+            
+            # Check if this specific synonym is mentioned in a mismatch reason
+            synonym_is_mismatched = has_object_mismatch and f'"{synonym}"' in reason
+            
+            if synonym_is_mismatched:
+                # Mismatched synonym: border only, no background color
+                style = "border: 2px solid #cc0000; padding: 1px 3px; border-radius: 3px; font-weight: bold; cursor: pointer; background-color: transparent;"
+                title = f"Object: {synonym} (has exact match to entity label but resolves to different entity - click to lookup)"
+            else:
+                # Matched synonym: full red background
+                style = "background-color: #ffcccb; padding: 1px 3px; border-radius: 3px; font-weight: bold; cursor: pointer;"
+                title = f"Object: {synonym} (click to lookup)"
+            
             highlighted_text = re.sub(
                 pattern,
-                f'<span class="synonym-highlight object-synonym" style="background-color: #ffcccb; padding: 1px 3px; border-radius: 3px; font-weight: bold; cursor: pointer;" title="Object: {synonym} (click to lookup)">\\g<0></span>',
+                f'<span class="synonym-highlight object-synonym" style="{style}" title="{title}">\\g<0></span>',
                 highlighted_text,
                 flags=re.IGNORECASE
             )

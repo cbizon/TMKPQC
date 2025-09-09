@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Test Stage 3: Text Matching & Lookup for FSH edge.
+Test Stage 3: Text Matching & Batch Lookup
 """
 
 import pytest
-from phase1 import stage3_text_matching_and_lookup
+from phase1 import stage3_text_matching_and_batch_lookup
 
 
 def test_stage3_fsh_edge_exact_matches():
@@ -44,8 +44,17 @@ def test_stage3_fsh_edge_exact_matches():
       }
     }
     
-    # Run Stage 3
-    lookup_cache = stage3_text_matching_and_lookup(edge, synonyms_data)
+    # Setup normalized and synonyms caches as the new function expects
+    batch_edges = [edge]
+    global_normalized_cache = {
+        "CHEBI:81569": {"id": {"identifier": "CHEBI:81569"}},
+        "UniProtKB:P80370": {"id": {"identifier": "NCBIGene:8788"}}
+    }
+    global_synonyms_cache = synonyms_data
+    
+    # Run Stage 3 with the new batched function
+    lookup_cache, batch_entity_synonyms_map = stage3_text_matching_and_batch_lookup(
+        batch_edges, global_normalized_cache, global_synonyms_cache)
     
     # EXACT OUTPUT VERIFICATION
     assert isinstance(lookup_cache, dict)
@@ -105,8 +114,17 @@ def test_stage3_no_supporting_text():
         'NCBIGene:8788': {'names': ['DLK1']}
     }
     
-    # Run Stage 3
-    lookup_cache = stage3_text_matching_and_lookup(edge, synonyms_data)
+    # Setup normalized cache
+    batch_edges = [edge]
+    global_normalized_cache = {
+        'CHEBI:81569': {'id': {'identifier': 'CHEBI:81569'}},
+        'NCBIGene:8788': {'id': {'identifier': 'NCBIGene:8788'}}
+    }
+    global_synonyms_cache = synonyms_data
+    
+    # Run Stage 3 with new signature
+    lookup_cache, batch_entity_synonyms_map = stage3_text_matching_and_batch_lookup(
+        batch_edges, global_normalized_cache, global_synonyms_cache)
     
     # Should return empty cache
     assert lookup_cache == {}
@@ -129,8 +147,17 @@ def test_stage3_no_synonyms_found():
         'NCBIGene:8788': {'names': ['DLK1']}
     }
     
-    # Run Stage 3
-    lookup_cache = stage3_text_matching_and_lookup(edge, synonyms_data)
+    # Setup normalized cache
+    batch_edges = [edge]
+    global_normalized_cache = {
+        'CHEBI:81569': {'id': {'identifier': 'CHEBI:81569'}},
+        'NCBIGene:8788': {'id': {'identifier': 'NCBIGene:8788'}}
+    }
+    global_synonyms_cache = synonyms_data
+    
+    # Run Stage 3 with new signature
+    lookup_cache, batch_entity_synonyms_map = stage3_text_matching_and_batch_lookup(
+        batch_edges, global_normalized_cache, global_synonyms_cache)
     
     # Should return empty cache
     assert lookup_cache == {}
@@ -153,8 +180,17 @@ def test_stage3_case_insensitive_matching():
         'NCBIGene:8788': {'names': ['DLK1'], 'types': ['Gene', 'GeneOrGeneProduct']}  # uppercase
     }
     
-    # Run Stage 3
-    lookup_cache = stage3_text_matching_and_lookup(edge, synonyms_data)
+    # Setup normalized cache
+    batch_edges = [edge]
+    global_normalized_cache = {
+        'CHEBI:81569': {'id': {'identifier': 'CHEBI:81569'}},
+        'NCBIGene:8788': {'id': {'identifier': 'NCBIGene:8788'}}
+    }
+    global_synonyms_cache = synonyms_data
+    
+    # Run Stage 3 with new signature
+    lookup_cache, batch_entity_synonyms_map = stage3_text_matching_and_batch_lookup(
+        batch_edges, global_normalized_cache, global_synonyms_cache)
     
     # Should find both synonyms despite case differences
     found_synonyms = set(lookup_cache.keys())
@@ -181,8 +217,17 @@ def test_stage3_data_structure():
         'NCBIGene:8788': {'names': ['DLK1'], 'types': ['Gene', 'GeneOrGeneProduct']}
     }
     
-    # Run Stage 3
-    lookup_cache = stage3_text_matching_and_lookup(edge, synonyms_data)
+    # Setup normalized cache
+    batch_edges = [edge]
+    global_normalized_cache = {
+        'CHEBI:81569': {'id': {'identifier': 'CHEBI:81569'}},
+        'NCBIGene:8788': {'id': {'identifier': 'NCBIGene:8788'}}
+    }
+    global_synonyms_cache = synonyms_data
+    
+    # Run Stage 3 with new signature
+    lookup_cache, batch_entity_synonyms_map = stage3_text_matching_and_batch_lookup(
+        batch_edges, global_normalized_cache, global_synonyms_cache)
     
     # Verify data structure
     assert isinstance(lookup_cache, dict)

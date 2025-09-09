@@ -4,7 +4,7 @@ Test Stage 4: Classification Logic with exact expected input/output.
 """
 
 import pytest
-from phase1 import stage4_classification_logic
+from phase1 import stage4_classification_logic, CLASSIFICATION_PASSED, CLASSIFICATION_UNRESOLVED, CLASSIFICATION_AMBIGUOUS
 
 
 def test_stage4_fsh_edge_classification():
@@ -116,7 +116,7 @@ def test_stage4_fsh_edge_classification():
     print(f"   Debug info: {debug_info}")
     
     # This assertion should FAIL to demonstrate the discrepancy 
-    assert classification == 'ambiguous', f"Expected 'ambiguous', got '{classification}'"
+    assert classification == CLASSIFICATION_AMBIGUOUS, f"Expected '{CLASSIFICATION_AMBIGUOUS}', got '{classification}'"
     
     # Verify debug info contains expected details
     assert debug_info['subject_curie'] == 'CHEBI:81569'
@@ -174,7 +174,7 @@ def test_stage4_unambiguous_case():
     print(f"✅ Unambiguous case classification: {classification}")
     
     # Should be GOOD since DLK1 has only one match that equals the original entity
-    assert classification == 'good', f"Expected 'good', got '{classification}'"
+    assert classification == CLASSIFICATION_PASSED, f"Expected '{CLASSIFICATION_PASSED}', got '{classification}'"
 
 
 def test_stage4_no_synonyms_in_text():
@@ -207,7 +207,7 @@ def test_stage4_no_synonyms_in_text():
     print(f"✅ No synonyms in text classification: {classification}")
     
     # Should be BAD since no entity synonyms were found in the supporting text
-    assert classification == 'bad', f"Expected 'bad', got '{classification}'"
+    assert classification == CLASSIFICATION_UNRESOLVED, f"Expected '{CLASSIFICATION_UNRESOLVED}', got '{classification}'"
 
 
 if __name__ == "__main__":

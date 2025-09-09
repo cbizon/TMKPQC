@@ -14,15 +14,15 @@
     <div class="col-md-4">
         <div class="card border-success">
             <div class="card-header bg-success text-white">
-                <h5 class="card-title mb-0">Good Edges</h5>
+                <h5 class="card-title mb-0">Passed Phase 1</h5>
             </div>
             <div class="card-body">
-                <h2 class="text-success">{{ summary.good }}</h2>
+                <h2 class="text-success">{{ summary['passed phase 1'] }}</h2>
                 <p class="card-text">Edges where both entities were clearly identified in the supporting text.</p>
-                {% if summary.good > 0 %}
-                <a href="{{ url_for('view_edges', classification='good') }}" class="btn btn-success">Review Good Edges</a>
+                {% if summary['passed phase 1'] > 0 %}
+                <a href="{{ url_for('view_edges', classification='passed phase 1') }}" class="btn btn-success">Review Passed Edges</a>
                 {% else %}
-                <button class="btn btn-success" disabled>No Good Edges</button>
+                <button class="btn btn-success" disabled>No Passed Edges</button>
                 {% endif %}
             </div>
         </div>
@@ -31,15 +31,15 @@
     <div class="col-md-4">
         <div class="card border-danger">
             <div class="card-header bg-danger text-white">
-                <h5 class="card-title mb-0">Bad Edges</h5>
+                <h5 class="card-title mb-0">Unresolved Entity</h5>
             </div>
             <div class="card-body">
-                <h2 class="text-danger">{{ summary.bad }}</h2>
+                <h2 class="text-danger">{{ summary['unresolved entity'] }}</h2>
                 <p class="card-text">Edges where entities could not be identified in the supporting text.</p>
-                {% if summary.bad > 0 %}
-                <a href="{{ url_for('view_edges', classification='bad') }}" class="btn btn-danger">Review Bad Edges</a>
+                {% if summary['unresolved entity'] > 0 %}
+                <a href="{{ url_for('view_edges', classification='unresolved entity') }}" class="btn btn-danger">Review Unresolved Edges</a>
                 {% else %}
-                <button class="btn btn-danger" disabled>No Bad Edges</button>
+                <button class="btn btn-danger" disabled>No Unresolved Edges</button>
                 {% endif %}
             </div>
         </div>
@@ -48,13 +48,13 @@
     <div class="col-md-4">
         <div class="card border-warning">
             <div class="card-header bg-warning text-dark">
-                <h5 class="card-title mb-0">Ambiguous Edges</h5>
+                <h5 class="card-title mb-0">Ambiguous Entity Resolution</h5>
             </div>
             <div class="card-body">
-                <h2 class="text-warning">{{ summary.ambiguous }}</h2>
+                <h2 class="text-warning">{{ summary['ambiguous entity resolution'] }}</h2>
                 <p class="card-text">Edges where entity identification was ambiguous or uncertain.</p>
-                {% if summary.ambiguous > 0 %}
-                <a href="{{ url_for('view_edges', classification='ambiguous') }}" class="btn btn-warning">Review Ambiguous Edges</a>
+                {% if summary['ambiguous entity resolution'] > 0 %}
+                <a href="{{ url_for('view_edges', classification='ambiguous entity resolution') }}" class="btn btn-warning">Review Ambiguous Edges</a>
                 {% else %}
                 <button class="btn btn-warning" disabled>No Ambiguous Edges</button>
                 {% endif %}
@@ -75,13 +75,13 @@
                         <strong>Total Edges:</strong> {{ summary.total }}
                     </div>
                     <div class="col-md-3">
-                        <strong>Good:</strong> {{ "%.1f"|format((summary.good / summary.total * 100) if summary.total > 0 else 0) }}%
+                        <strong>Passed:</strong> {{ "%.1f"|format((summary['passed phase 1'] / summary.total * 100) if summary.total > 0 else 0) }}%
                     </div>
                     <div class="col-md-3">
-                        <strong>Bad:</strong> {{ "%.1f"|format((summary.bad / summary.total * 100) if summary.total > 0 else 0) }}%
+                        <strong>Unresolved:</strong> {{ "%.1f"|format((summary['unresolved entity'] / summary.total * 100) if summary.total > 0 else 0) }}%
                     </div>
                     <div class="col-md-3">
-                        <strong>Ambiguous:</strong> {{ "%.1f"|format((summary.ambiguous / summary.total * 100) if summary.total > 0 else 0) }}%
+                        <strong>Ambiguous:</strong> {{ "%.1f"|format((summary['ambiguous entity resolution'] / summary.total * 100) if summary.total > 0 else 0) }}%
                     </div>
                 </div>
             </div>
