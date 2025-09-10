@@ -604,16 +604,34 @@ def stage3_text_matching_and_batch_lookup(batch_edges: List[Dict[str, Any]],
             only_taxa = ['NCBITaxon:9606'] if entity_type == 'Gene' else []
             only_taxa_str = ','.join(only_taxa) if only_taxa else ""
             
+            
             try:
+                # Use smaller batch size for SmallMolecule due to API timeout issues
+                batch_size = 10 if 'SmallMolecule' in (biolink_types or []) else 100
+                
+                # Time the lookup for performance analysis
+                lookup_start = time.time()
                 if biolink_types:
                     results = bulk_lookup_names(type_synonyms, 
                                               biolink_types=biolink_types,
                                               only_taxa=only_taxa_str,
-                                              limit=20)
+                                              limit=20,
+                                              batch_size=batch_size)
                 else:
-                    results = bulk_lookup_names(type_synonyms, limit=20)
+                    results = bulk_lookup_names(type_synonyms, limit=20, batch_size=batch_size)
+                lookup_time = time.time() - lookup_start
+                print(f"TIMING: {entity_type} lookup took {lookup_time:.2f}s for {len(type_synonyms)} synonyms ({len(type_synonyms)/lookup_time:.1f} synonyms/sec)")
             except Exception as e:
                 print(f"CRITICAL: API error during lookup for {entity_type}: {e}")
+                print(f"Failed batch details:")
+                print(f"  Entity type: {entity_type}")
+                print(f"  Biolink types: {biolink_types}")
+                print(f"  Taxa filter: {only_taxa_str}")
+                print(f"  Number of synonyms: {len(type_synonyms)}")
+                print(f"  First 10 synonyms: {type_synonyms[:10]}")
+                if len(type_synonyms) > 10:
+                    print(f"  Last 10 synonyms: {type_synonyms[-10:]}")
+                print(f"  All synonyms: {type_synonyms}")
                 print(f"After multiple retries with exponential backoff, the APIs are unavailable.")
                 print(f"Stopping process to avoid generating incorrect classifications.")
                 print(f"Partial results have been saved to the output directory.")
@@ -727,6 +745,12 @@ def run_streaming(edges_file: str, nodes_file: str, output_dir: str = "output",
     
     start_time = time.time()
     
+    # Timing instrumentation
+    total_stage1_time = 0
+    total_stage2_time = 0
+    total_stage3_time = 0
+    total_stage4_time = 0
+    
     with open(edges_file, 'r') as f:
         for line in f:
             if line.strip():
@@ -739,9 +763,15 @@ def run_streaming(edges_file: str, nodes_file: str, output_dir: str = "output",
                     is_final = (max_edges and edge_count >= max_edges)
                     
                     batch_start = time.time()
-                    process_efficient_batch(current_batch, nodes, output_files, 
+                    batch_stage1, batch_stage2, batch_stage3, batch_stage4 = process_efficient_batch(current_batch, nodes, output_files, 
                                           global_normalized_cache, global_synonyms_cache)
                     batch_time = time.time() - batch_start
+                    
+                    # Accumulate stage timings
+                    total_stage1_time += batch_stage1
+                    total_stage2_time += batch_stage2
+                    total_stage3_time += batch_stage3
+                    total_stage4_time += batch_stage4
                     
                     rate = len(current_batch) / batch_time if batch_time > 0 else 0
                     final_text = " (final)" if is_final else ""
@@ -774,6 +804,16 @@ def run_streaming(edges_file: str, nodes_file: str, output_dir: str = "output",
     
     print(f"Total runtime: {total_time:.2f} seconds")
     print(f"Processing rate: {rate:.1f} edges/second")
+    
+    # Detailed timing breakdown
+    print(f"\n=== TIMING BREAKDOWN ===")
+    print(f"Stage 1 (Entity Collection): {total_stage1_time:.2f}s ({100*total_stage1_time/total_time:.1f}%)")
+    print(f"Stage 2 (Synonym Retrieval): {total_stage2_time:.2f}s ({100*total_stage2_time/total_time:.1f}%)")  
+    print(f"Stage 3 (Text Matching/Lookup): {total_stage3_time:.2f}s ({100*total_stage3_time/total_time:.1f}%)")
+    print(f"Stage 4 (Classification): {total_stage4_time:.2f}s ({100*total_stage4_time/total_time:.1f}%)")
+    accounted_time = total_stage1_time + total_stage2_time + total_stage3_time + total_stage4_time
+    overhead_time = total_time - accounted_time
+    print(f"Overhead/Other: {overhead_time:.2f}s ({100*overhead_time/total_time:.1f}%)")
     
     # Count results
     output_files_paths = {
@@ -808,10 +848,11 @@ def run_streaming(edges_file: str, nodes_file: str, output_dir: str = "output",
 
 def process_efficient_batch(batch_edges: List[Dict[str, Any]], nodes: Dict[str, Any],
                            output_files: Dict[str, Any], global_normalized_cache: Dict[str, Any],
-                           global_synonyms_cache: Dict[str, Any]) -> None:
+                           global_synonyms_cache: Dict[str, Any]) -> tuple:
     """Process a batch of edges with efficient stages 1-4 integration."""
     
     # STAGE 1: Collect unique entities from this batch
+    stage1_start = time.time()
     batch_entities = set()
     for edge in batch_edges:
         batch_entities.add(edge.get('subject'))
@@ -839,7 +880,10 @@ def process_efficient_batch(batch_edges: List[Dict[str, Any]], nodes: Dict[str, 
             # Filter batch_normalized_data but keep the full structure for processing
             batch_normalized_data = {k: v for k, v in global_normalized_cache.items() if k in new_entities and v is not None}
     
+    stage1_time = time.time() - stage1_start
+    
     # STAGE 2: Get synonyms for new preferred entities
+    stage2_start = time.time()
     new_preferred_entities = []
     for entity_id in new_entities:
         if entity_id in global_normalized_cache and global_normalized_cache[entity_id]:
@@ -861,11 +905,16 @@ def process_efficient_batch(batch_edges: List[Dict[str, Any]], nodes: Dict[str, 
                     'types': ['SmallMolecule']  # Default type for testing
                 }
     
+    stage2_time = time.time() - stage2_start
+    
     # STAGE 3: Text matching and batch lookup
+    stage3_start = time.time()
     batch_lookup_cache, batch_entity_synonyms_map = stage3_text_matching_and_batch_lookup(
         batch_edges, global_normalized_cache, global_synonyms_cache)
+    stage3_time = time.time() - stage3_start
     
     # STAGE 4: Process each edge with cached data
+    stage4_start = time.time()
     for edge in batch_edges:
         # Create edge-specific data from caches
         edge_entities = [edge.get('subject'), edge.get('object')]
@@ -883,6 +932,10 @@ def process_efficient_batch(batch_edges: List[Dict[str, Any]], nodes: Dict[str, 
                                                                edge_normalized_data, edge_synonyms_data)
         
         write_edge_result(edge, classification, output_files, nodes, debug_info)
+    
+    stage4_time = time.time() - stage4_start
+    
+    return stage1_time, stage2_time, stage3_time, stage4_time
 
 
 def collect_synonyms_from_batch(batch_edges: List[Dict[str, Any]], 

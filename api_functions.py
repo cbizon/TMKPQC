@@ -305,6 +305,7 @@ def _bulk_lookup_names_raw(strings: List[str],
         "only_taxa": only_taxa or ""
     }
     
+    
     headers = {
         "Content-Type": "application/json",
         "Accept": "application/json"
